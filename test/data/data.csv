@@ -1,0 +1,21 @@
+id,name,email,age,active,created_at
+1,Alice Johnson,alice@example.com,30,true,2024-01-15
+2,Bob Smith,bob@example.com,25,false,2024-02-20
+3,Charlie Brown,charlie@example.com,35,true,2024-03-10
+4,Diana Prince,diana@example.com,28,true,2024-04-05
+5,Eve Wilson,eve@example.com,42,false,2024-05-12
+6,Frank Miller,frank@example.com,31,true,2024-06-18
+7,Grace Lee,grace@example.com,27,true,2024-07-22
+8,Henry Davis,henry@example.com,45,false,2024-08-30
+9,Iris Chen,iris@example.com,33,true,2024-09-14
+10,Jack Taylor,jack@example.com,29,true,2024-10-01
+11,Karen White,karen@example.com,38,false,2024-11-05
+12,Leo Martinez,leo@example.com,26,true,2024-12-20
+13,Mia Anderson,mia@example.com,41,true,2025-01-08
+14,Noah Thomas,noah@example.com,36,false,2025-01-22
+15,Olivia Garcia,olivia@example.com,24,true,2025-02-14
+16,Peter Robinson,peter@example.com,39,true,2025-02-28
+17,Quinn Clark,quinn@example.com,32,false,2025-03-15
+18,Rachel Lewis,rachel@example.com,37,true,2025-04-01
+19,Sam Walker,sam@example.com,23,true,2025-04-18
+20,Tina Hall,tina@example.com,34,false,2025-05-05
