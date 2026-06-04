@@ -279,6 +279,7 @@ Examples:
 	rootCmd.Flags().String("cast", "", "cast rules file")
 	rootCmd.Flags().String("type", "", "source type (csv, mysql, postgresql, pg)")
 	rootCmd.Flags().Bool("foreign-keys", true, "create foreign keys after data load")
+	rootCmd.Flags().MarkHidden("foreign-keys")
 	rootCmd.Flags().Bool("include-drop", false, "DROP TABLE IF EXISTS before CREATE TABLE")
 
 	if err := rootCmd.Execute(); err != nil {
