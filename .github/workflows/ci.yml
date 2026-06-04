@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -20,3 +20,48 @@ jobs:
       run: go vet ./...
     - name: Test
       run: go test ./internal/... -count=1
+
+  pg-to-pg-migration:
+    runs-on: ubuntu-latest
+    services:
+      pg-source:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: sourcedb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      pg-target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: targetdb
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20'
+    - name: Install PostgreSQL client
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+    - name: Create source test data
+      run: psql postgresql://test:test@localhost:5432/sourcedb -f test/pgsql_migration_test_data.sql
+    - name: Build pgloader
+      run: go build -o pgloader ./cmd/pgloader
+    - name: Migrate source to target
+      run: ./pgloader postgresql://test:test@localhost:5432/sourcedb postgresql://test:test@localhost:5433/targetdb --with "foreign keys"
+    - name: Verify migration results
+      run: psql postgresql://test:test@localhost:5433/targetdb -f test/pgsql_migration_verify.sql -t -A
