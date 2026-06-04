@@ -65,3 +65,47 @@ jobs:
       run: ./pgloader postgresql://test:test@localhost:5432/sourcedb postgresql://test:test@localhost:5433/targetdb --with "foreign keys"
     - name: Verify migration results
       run: psql postgresql://test:test@localhost:5433/targetdb -f test/pgsql_migration_verify.sql -t -A
+
+  mysql-to-pg-migration:
+    runs-on: ubuntu-latest
+    services:
+      mysql-source:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: sourcedb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      pg-target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: targetdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20'
+    - name: Install clients
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mysql-client postgresql-client
+    - name: Create MySQL source test data
+      run: mysql -h 127.0.0.1 -u root -ptest sourcedb < test/mysql_migration_test_data.sql
+    - name: Build pgloader
+      run: go build -o pgloader ./cmd/pgloader
+    - name: Migrate MySQL to PostgreSQL
+      run: ./pgloader mysql://root:test@127.0.0.1:3306/sourcedb postgresql://test:test@127.0.0.1:5432/targetdb --with "foreign keys"
+    - name: Verify migration results
+      run: psql postgresql://test:test@127.0.0.1:5432/targetdb -f test/mysql_migration_verify.sql -t -A
