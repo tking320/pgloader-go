@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -243,6 +244,8 @@ func convertSQLiteValue(v interface{}) interface{} {
 		return val
 	case []byte:
 		return string(val) // SQLite TEXT/BLOB: return as string for COPY text format
+	case time.Time:
+		return val.Format("2006-01-02 15:04:05.999999-07")
 	case bool:
 		if val {
 			return int64(1)
