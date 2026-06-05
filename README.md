@@ -42,6 +42,7 @@ Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL dat
 | Package | Responsibility |
 |---------|---------------|
 | [`cmd/pgloader`](cmd/pgloader) | CLI entry point, flag parsing, source dispatch |
+| [`internal/configfile`](internal/configfile) | `.load` config file parser and executor |
 | [`internal/config`](internal/config) | Global configuration, WITH option parsing |
 | [`internal/catalog`](internal/catalog) | Data model for schemas, tables, columns, indexes, FKs; DDL generation |
 | [`internal/source`](internal/source) | `Source` and `DbSource` interfaces |
@@ -76,6 +77,8 @@ FetchMetadata (introspect source schema)
 
 ## Usage
 
+### Command line (direct)
+
 ```bash
 # CSV import
 pgloader data.csv postgresql://localhost/mydb --table mytable --header
@@ -91,6 +94,46 @@ pgloader mysql://user@host/dbname postgresql://localhost/target --with "schema o
 
 # Dry run (validate connections only)
 pgloader mysql://user@host/dbname postgresql://localhost/target --dry-run
+```
+
+### Config file (.load)
+
+pgloader-go supports native pgloader `.load` config files for complex migration definitions:
+
+```bash
+pgloader my_migration.load
+```
+
+A `.load` file defines the full migration in one place. Example (`mysql.load.sample`):
+
+```text
+LOAD DATABASE
+     FROM mysql://root:password@127.0.0.1:3306/sakila
+     INTO postgresql://localhost:5432/sakila
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, truncate, comments, batch size = 10000
+
+     SET maintenance_work_mem to '128MB',
+         work_mem to '64MB',
+         client_encoding to 'UTF8'
+
+     CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+          type tinyint to smallint,
+          type float to double precision drop typemod,
+          type year to smallint
+
+     MATERIALIZE ALL VIEWS
+
+     INCLUDING ONLY TABLE NAMES MATCHING ~/actor/, ~/film/, 'customer', 'payment'
+     EXCLUDING TABLE NAMES MATCHING ~/tmp_/, 'test_%'
+
+     BEFORE LOAD DO
+     $$ create schema if not exists sakila; $$,
+     $$ alter database sakila set search_path to sakila, public; $$
+
+     AFTER LOAD DO
+     $$ create index on sakila.film (title); $$;
 ```
 
 ## Options
@@ -130,6 +173,22 @@ pgloader mysql://user@host/dbname postgresql://localhost/target --dry-run
 | `batch concurrency = N` | Writer goroutines |
 | `prefetch rows = N` | Rows to prefetch (default 10000) |
 | `batch rows per range = N` | DB source shard size |
+| `comments` / `no comments` | Enable/disable table/column comment migration |
+
+### Config file syntax
+
+| Clause | Description |
+|--------|-------------|
+| `LOAD DATABASE FROM uri INTO uri` | Database-to-database migration |
+| `LOAD CSV FROM path INTO uri TARGET TABLE t` | CSV import |
+| `WITH ...` | Comma-separated WITH options (same as CLI) |
+| `SET guc TO 'val'` | PostgreSQL GUC settings applied to target |
+| `CAST type src TO dst ...` | Type mapping rules (same format as native pgloader) |
+| `BEFORE LOAD DO $$ sql $$` | SQL to execute before loading (dollar-quoted) |
+| `AFTER LOAD DO $$ sql $$` | SQL to execute after loading |
+| `INCLUDING ONLY TABLE NAMES MATCHING ...` | Filter tables to include (regex or pattern) |
+| `EXCLUDING TABLE NAMES MATCHING ...` | Filter tables to exclude |
+| `MATERIALIZE ALL VIEWS` | Materialize source views as tables |
 
 ## Output
 
@@ -199,5 +258,5 @@ make build
 - [ ] SQLite source
 - [ ] MSSQL source
 - [ ] Fixed-width / DBF / IXF sources
-- [ ] `.load` command file parser
+- [x] `.load` command file parser
 - [ ] Citus distribution support
