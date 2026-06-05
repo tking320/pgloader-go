@@ -23,11 +23,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	"github.com/tking320/pgloader-go/internal/cast"
 	"github.com/tking320/pgloader-go/internal/config"
+	"github.com/tking320/pgloader-go/internal/configfile"
 	"github.com/tking320/pgloader-go/internal/monitor"
 	"github.com/tking320/pgloader-go/internal/orchestrator"
 	"github.com/tking320/pgloader-go/internal/pipeline"
@@ -84,6 +84,40 @@ func execute(ctx context.Context) error {
 			}
 			sourceArg = args[0]
 
+			// If the first argument is a .load config file, delegate to
+			// the config file executor instead of using CLI arguments.
+			// CLI flags still apply as overrides on top of config file settings.
+			if strings.HasSuffix(sourceArg, ".load") {
+				if len(args) > 1 {
+					return fmt.Errorf("only one .load file supported per invocation")
+				}
+				// Read CLI flags for override
+				loadDebug, _ := cmd.Flags().GetBool("debug")
+				loadQuiet, _ := cmd.Flags().GetBool("quiet")
+				loadDryRun, _ := cmd.Flags().GetBool("dry-run")
+				loadWith, _ := cmd.Flags().GetStringSlice("with")
+				loadSet, _ := cmd.Flags().GetStringSlice("set")
+				loadFkeys, _ := cmd.Flags().GetBool("foreign-keys")
+				loadIncludeDrop, _ := cmd.Flags().GetBool("include-drop")
+
+				// Convert --foreign-keys and --include-drop to WITH strings
+				if !loadFkeys {
+					loadWith = append(loadWith, "no foreign keys")
+				}
+				if loadIncludeDrop {
+					loadWith = append(loadWith, "include drop")
+				}
+
+				cli := configfile.CLIOptions{
+					Debug:  loadDebug,
+					Quiet:  loadQuiet,
+					DryRun: loadDryRun,
+					With:   loadWith,
+					Set:    loadSet,
+				}
+				return configfile.ExecuteConfigFile(ctx, sourceArg, cli)
+			}
+
 			if guess && len(args) == 1 && !isURISource(sourceArg) {
 				guessed, err := csv.GuessParams(sourceArg)
 				if err != nil {
@@ -132,7 +166,7 @@ func execute(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("parse target URL: %w", err)
 				}
-				poolCfg.ConnConfig.Tracer = &debugTracer{}
+				poolCfg.ConnConfig.Tracer = &configfile.DebugTracer{}
 				pool, err = pgxpool.NewWithConfig(ctx, poolCfg)
 			} else {
 				pool, err = pgxpool.New(ctx, dbURL)
@@ -309,70 +343,6 @@ func execSQLFile(ctx context.Context, pool *pgxpool.Pool, path string) error {
 }
 
 // ---------------------------------------------------------------------------
-// debugTracer — pgx tracer for SQL logging in debug mode
-// ---------------------------------------------------------------------------
-
-// debugTracer implements pgx tracer interfaces to log SQL in debug mode.
-type debugTracer struct{}
-
-func (d *debugTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	fmt.Fprintf(os.Stderr, "DEBUG SQL: %s\n", data.SQL)
-	return ctx
-}
-
-func (d *debugTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
-	if data.Err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG SQL ERROR: %v\n", data.Err)
-	}
-}
-
-func (d *debugTracer) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
-	fmt.Fprintf(os.Stderr, "DEBUG SQL: COPY %s FROM STDIN\n", data.TableName)
-	return ctx
-}
-
-func (d *debugTracer) TraceCopyFromEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromEndData) {
-	if data.Err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG SQL ERROR: %v\n", data.Err)
-	}
-}
-
-func (d *debugTracer) TraceBatchStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
-	return ctx
-}
-
-func (d *debugTracer) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
-	fmt.Fprintf(os.Stderr, "DEBUG SQL: %s\n", data.SQL)
-	if data.Err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG SQL ERROR: %v\n", data.Err)
-	}
-}
-
-func (d *debugTracer) TraceBatchEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {}
-
-func (d *debugTracer) TracePrepareStart(ctx context.Context, conn *pgx.Conn, data pgx.TracePrepareStartData) context.Context {
-	fmt.Fprintf(os.Stderr, "DEBUG SQL: PREPARE %s AS %s\n", data.Name, data.SQL)
-	return ctx
-}
-
-func (d *debugTracer) TracePrepareEnd(ctx context.Context, conn *pgx.Conn, data pgx.TracePrepareEndData) {
-	if data.Err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG SQL ERROR: %v\n", data.Err)
-	}
-}
-
-func (d *debugTracer) TraceConnectStart(ctx context.Context, data pgx.TraceConnectStartData) context.Context {
-	fmt.Fprintf(os.Stderr, "DEBUG SQL: connecting to %s\n", data.ConnConfig.ConnString())
-	return ctx
-}
-
-func (d *debugTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
-	if data.Err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG SQL ERROR: %v\n", data.Err)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Source type detection
 // ---------------------------------------------------------------------------
 
@@ -429,10 +399,7 @@ func runMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	defer src.Close()
 
 	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
-	if err := mig.Run(ctx); err != nil {
-		return err
-	}
-	return nil
+	return mig.Run(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -474,10 +441,7 @@ func runCSV(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	src := csv.NewCSVSource(sourceArg, table, opts...)
 
 	pipe := pipeline.New(cfg, src, pool, mon, schema, table)
-	if err := pipe.Run(ctx); err != nil {
-		return err
-	}
-	return nil
+	return pipe.Run(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -496,8 +460,5 @@ func runPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	defer src.Close()
 
 	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
-	if err := mig.Run(ctx); err != nil {
-		return err
-	}
-	return nil
+	return mig.Run(ctx)
 }

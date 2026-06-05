@@ -79,8 +79,6 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		batch.RowCount++
 		batch.ByteCount += int64(len(formatted))
 
-		p.mon.Events() <- monitor.Event{Type: monitor.EventRead, Table: tableName, Count: 1}
-
 		if batch.RowCount >= p.cfg.BatchSize || batch.ByteCount >= p.cfg.BatchBytes {
 			if err := p.flush(ctx, conn.Conn(), writer, batch, tableName); err != nil {
 				return fmt.Errorf("flush: %w", err)

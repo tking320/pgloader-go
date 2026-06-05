@@ -186,6 +186,10 @@ func (c *Config) ApplyWithOption(opt string) error {
 		c.OnErrorStop = true
 	case "no on error stop":
 		c.OnErrorStop = false
+	case "comments":
+		c.Comments = true
+	case "no comments":
+		c.Comments = false
 	default:
 		return fmt.Errorf("unknown WITH option: %q", opt)
 	}

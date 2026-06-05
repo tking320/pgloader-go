@@ -29,8 +29,8 @@ type PgSQLSource struct {
 	table     string // target table name
 
 	// Schema catalog (populated by FetchMetadata)
-	catalog    *catalog.Catalog
-	schema_    *catalog.Schema
+	catalog *catalog.Catalog
+	schema_ *catalog.Schema
 
 	// CAST engine
 	castEngine *cast.Engine
@@ -119,8 +119,7 @@ func (s *PgSQLSource) DataIsPreformatted() bool { return true }
 func (s *PgSQLSource) Clone() source.Source {
 	clone := *s
 	clone.srcPool = nil // each clone gets its own connection
-	clone.catalog = nil
-	clone.schema_ = nil
+	// Keep catalog and schema_ shared (read-only) so shards can MapRows
 	return &clone
 }
 
@@ -265,7 +264,7 @@ func (s *PgSQLSource) PrepareTarget(ctx context.Context, opts source.PrepareOpti
 	seqNames := make(map[string]bool)
 	for _, t := range s.schema_.Tables {
 		for _, c := range t.Columns {
-			if c.SequenceName != "" && !(c.IsAutoInc && c.Extra != "") {
+			if c.SequenceName != "" && c.ExtraDDL == "" {
 				seqNames[c.SequenceName] = true
 			}
 		}
@@ -395,6 +394,21 @@ func (s *PgSQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 				if sql != "" {
 					if _, err := conn.Exec(ctx, sql); err != nil {
 						return fmt.Errorf("create trigger %s: %w\nSQL: %s", trig.Name, err, sql)
+					}
+				}
+			}
+		}
+
+		if opts.Comments {
+			if sql := t.TableCommentSQL(); sql != "" {
+				if _, err := conn.Exec(ctx, sql); err != nil {
+					return fmt.Errorf("comment on table %s: %w\nSQL: %s", t.Name, err, sql)
+				}
+			}
+			for _, col := range t.Columns {
+				if sql := col.ColumnCommentSQL(t); sql != "" {
+					if _, err := conn.Exec(ctx, sql); err != nil {
+						return fmt.Errorf("comment on column %s.%s: %w\nSQL: %s", t.Name, col.Name, err, sql)
 					}
 				}
 			}

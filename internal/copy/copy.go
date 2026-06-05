@@ -232,8 +232,8 @@ func (w *CopyWriter) FlushBatch(ctx context.Context, schema string, table string
 
 // RetryResult represents the outcome of a batch retry operation.
 type RetryResult struct {
-	Imported int            // number of rows successfully imported
-	Rejected []source.Row   // rows that failed (bad data)
+	Imported int          // number of rows successfully imported
+	Rejected []source.Row // rows that failed (bad data)
 }
 
 // RetryBatch handles a COPY error by performing binary search to isolate

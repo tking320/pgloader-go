@@ -75,8 +75,8 @@ type FileSource struct {
 	Enc        string
 }
 
-func (fs *FileSource) TableName() string   { return fs.TargetName }
-func (fs *FileSource) Encoding() string    { return fs.Enc }
+func (fs *FileSource) TableName() string        { return fs.TargetName }
+func (fs *FileSource) Encoding() string         { return fs.Enc }
 func (fs *FileSource) DataIsPreformatted() bool { return false }
 
 // DbSource is the interface for database-backed sources (MySQL, SQLite, MSSQL, PG-to-PG).
@@ -102,11 +102,11 @@ type DbSource interface {
 
 // PrepareOptions controls schema preparation behavior.
 type PrepareOptions struct {
-	Truncate       bool
-	CreateTables   bool
-	CreateSchemas  bool
-	DropIndexes    bool
-	IncludeDrop    bool
+	Truncate         bool
+	CreateTables     bool
+	CreateSchemas    bool
+	DropIndexes      bool
+	IncludeDrop      bool
 	MaterializeViews []string
 }
 

@@ -63,25 +63,30 @@ func (ts *TableStats) Elapsed() float64 {
 // ---------------------------------------------------------------------------
 
 // Monitor collects events and produces summary reports.
+// Safe for concurrent use: Events() returns a send-only channel
+// (thread-safe in Go), and internal state is protected by a mutex.
+// Multiple goroutines may send events concurrently (e.g. concurrent COPY shards).
 type Monitor struct {
-	mu      sync.Mutex
-	tables  map[string]*TableStats
-	order   []string // insertion order for deterministic iteration
-	events  chan Event
-	done    chan struct{}
-	output  io.Writer
-	verbose bool
+	mu          sync.Mutex
+	tables      map[string]*TableStats
+	order       []string // insertion order for deterministic iteration
+	events      chan Event
+	done        chan struct{}
+	output      io.Writer
+	verbose     bool
+	writeCounts map[string]int // per-table write counter for throttled progress
 }
 
 // NewMonitor creates a new Monitor.
 func NewMonitor(output io.Writer, verbose bool) *Monitor {
 	return &Monitor{
-		tables:  make(map[string]*TableStats),
-		order:   make([]string, 0),
-		events:  make(chan Event, 1000),
-		done:    make(chan struct{}),
-		output:  output,
-		verbose: verbose,
+		tables:      make(map[string]*TableStats),
+		order:       make([]string, 0),
+		events:      make(chan Event, 1000),
+		done:        make(chan struct{}),
+		output:      output,
+		verbose:     verbose,
+		writeCounts: make(map[string]int),
 	}
 }
 
@@ -133,6 +138,7 @@ func (m *Monitor) processEvent(evt Event) {
 	case EventWrite:
 		ts.RowsWritten += evt.Count
 		ts.Bytes += evt.Bytes
+		m.writeCounts[evt.Table]++
 	case EventError:
 		ts.Errors++
 	case EventPrepare:
@@ -140,7 +146,9 @@ func (m *Monitor) processEvent(evt Event) {
 	}
 
 	if m.verbose {
-		fmt.Fprintf(m.output, "  %s: %s\n", evt.Table, eventSummary(evt))
+		if evt.Type != EventWrite || m.writeCounts[evt.Table]%10 == 0 {
+			fmt.Fprintf(m.output, "  %s: %s\n", evt.Table, eventSummary(evt))
+		}
 	}
 }
 

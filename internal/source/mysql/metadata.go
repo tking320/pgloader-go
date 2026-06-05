@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/tking320/pgloader-go/internal/cast"
@@ -32,6 +33,26 @@ ORDER BY table_name`
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
+		// Apply INCLUDING ONLY TABLE NAMES MATCHING filter
+		if len(s.includingOnly) > 0 {
+			match, err := tableMatches(name, s.includingOnly)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		// Apply EXCLUDING TABLE NAMES MATCHING filter
+		if len(s.excluding) > 0 {
+			match, err := tableMatches(name, s.excluding)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				continue
+			}
+		}
 		tables = append(tables, name)
 	}
 	return tables, rows.Err()
@@ -46,6 +67,14 @@ func (s *MySQLSource) fetchTableMetadata(ctx context.Context, tableName string) 
 	t := &catalog.Table{
 		Name:   tableName,
 		Schema: s.schema_,
+	}
+
+	// Fetch table comment
+	var tableComment string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT table_comment FROM information_schema.tables
+		 WHERE table_schema = ? AND table_name = ?`, s.dbName, tableName).Scan(&tableComment); err == nil {
+		t.Comment = tableComment
 	}
 
 	// Fetch columns
@@ -151,7 +180,7 @@ ORDER BY c.ordinal_position`
 			} else {
 				col.Default = r.Default.String
 			}
-		
+
 			// Adjust default for boolean-typed columns
 			if targetType == "boolean" {
 				if col.Default == "0" {
@@ -179,11 +208,11 @@ ORDER BY c.ordinal_position`
 // ---------------------------------------------------------------------------
 
 type mysqlIndexRow struct {
-	TableName    string
-	IndexName    string
-	IndexType    string
-	NonUnique    int64
-	ColumnNames  string
+	TableName   string
+	IndexName   string
+	IndexType   string
+	NonUnique   int64
+	ColumnNames string
 }
 
 func (s *MySQLSource) fetchIndexes(ctx context.Context, tableName string) ([]*catalog.Index, error) {
@@ -301,13 +330,13 @@ GROUP BY tc.table_name, tc.constraint_name, k.REFERENCED_TABLE_NAME,
 		}
 
 		fk := &catalog.ForeignKey{
-			Name:          r.ConstraintName,
-			TableName:     r.TableName,
-			Columns:       splitCSV(r.ColumnNames),
-			ForeignTable:  r.RefTableName,
+			Name:           r.ConstraintName,
+			TableName:      r.TableName,
+			Columns:        splitCSV(r.ColumnNames),
+			ForeignTable:   r.RefTableName,
 			ForeignColumns: splitCSV(r.RefColumnNames),
-			UpdateRule:    r.UpdateRule,
-			DeleteRule:    r.DeleteRule,
+			UpdateRule:     r.UpdateRule,
+			DeleteRule:     r.DeleteRule,
 		}
 		fkeys = append(fkeys, fk)
 	}
@@ -343,4 +372,59 @@ func isTextType(dataType string) bool {
 	default:
 		return false
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Table name pattern matching (INCLUDING/EXCLUDING)
+// ---------------------------------------------------------------------------
+
+// tableMatches checks if a table name matches any of the given patterns.
+// An empty patterns list means "match everything" (no filter).
+// Returns an error if any pattern fails to compile.
+func tableMatches(name string, patterns []string) (bool, error) {
+	if len(patterns) == 0 {
+		return true, nil
+	}
+	for _, p := range patterns {
+		re, err := compileTablePattern(p)
+		if err != nil {
+			return false, fmt.Errorf("invalid table pattern %q: %w", p, err)
+		}
+		if re.MatchString(name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// compileTablePattern converts a pgloader table name pattern to a compiled regexp.
+// Pattern formats:
+//
+//	~/regex/     → case-insensitive regex match
+//	'pattern'    → case-insensitive exact match, with LIKE wildcard conversion
+//	pattern      → same as quoted (case-insensitive, LIKE wildcard conversion)
+func compileTablePattern(pattern string) (*regexp.Regexp, error) {
+	p := pattern
+
+	// Regex pattern: ~/.../
+	if strings.HasPrefix(p, "~/") && strings.HasSuffix(p, "/") {
+		p = p[2 : len(p)-1]
+		return regexp.Compile("(?i)" + p)
+	}
+
+	// Strip surrounding quotes
+	if len(p) >= 2 && p[0] == '\'' && p[len(p)-1] == '\'' {
+		p = p[1 : len(p)-1]
+	}
+
+	// Check for SQL LIKE wildcards and convert to regex
+	if strings.ContainsAny(p, "%_") {
+		escaped := regexp.QuoteMeta(p)
+		escaped = strings.ReplaceAll(escaped, "%", ".*")
+		escaped = strings.ReplaceAll(escaped, "_", ".")
+		return regexp.Compile("^(?i)" + escaped + "$")
+	}
+
+	// Plain text: case-insensitive exact match
+	return regexp.Compile("^(?i)" + regexp.QuoteMeta(p) + "$")
 }

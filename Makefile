@@ -2,7 +2,7 @@ APP_NAME   = pgloader
 BUILDDIR   = build
 GO         = go
 
-.PHONY: all build test clean lint fmt
+.PHONY: all build test test-short lint fmt clean check
 
 all: build
 
@@ -20,6 +20,9 @@ lint:
 
 fmt:
 	$(GO) fmt ./...
+
+check: lint build test
+	$(GO) build -race ./...
 
 clean:
 	rm -rf $(BUILDDIR)

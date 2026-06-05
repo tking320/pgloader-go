@@ -39,9 +39,9 @@ type MatchRule struct {
 type TriState int8
 
 const (
-	Any      TriState = 0
-	Yes      TriState = 1
-	No       TriState = -1
+	Any TriState = 0
+	Yes TriState = 1
+	No  TriState = -1
 )
 
 // matches reports whether the rule matches the given column attributes.

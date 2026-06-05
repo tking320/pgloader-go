@@ -4,7 +4,9 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -105,6 +107,8 @@ func (m *Migration) Run(ctx context.Context) error {
 }
 
 // copyAllTables runs the data pipeline for each table in the catalog.
+// When the source supports PK-range sharding and concurrency > 1,
+// tables are loaded in parallel using multiple shards.
 func (m *Migration) copyAllTables(ctx context.Context) error {
 	tableNames := m.src.TableNames()
 	if len(tableNames) == 0 {
@@ -116,10 +120,68 @@ func (m *Migration) copyAllTables(ctx context.Context) error {
 			return fmt.Errorf("set active table %s: %w", tableName, err)
 		}
 
-		pipe := pipeline.New(m.cfg, m.src, m.pool, m.mon, m.targetSchema, tableName)
-		if err := pipe.Run(ctx); err != nil {
-			return fmt.Errorf("pipeline for %s: %w", tableName, err)
+		// Check if this table supports PK-range sharding for concurrent COPY
+		concurrency := m.cfg.Concurrency
+		shards, err := m.src.ConcurrencySupport(ctx, concurrency)
+		if err != nil {
+			return fmt.Errorf("concurrency support for %s: %w", tableName, err)
+		}
+
+		if len(shards) > 0 {
+			// Parallel: run one pipeline per shard, each covering a PK range
+			if err := m.copyWithConcurrency(ctx, shards, tableName); err != nil {
+				return fmt.Errorf("parallel copy %s: %w", tableName, err)
+			}
+		} else {
+			// Sequential: single pipeline for the whole table
+			pipe := pipeline.New(m.cfg, m.src, m.pool, m.mon, m.targetSchema, tableName)
+			if err := pipe.Run(ctx); err != nil {
+				return fmt.Errorf("pipeline for %s: %w", tableName, err)
+			}
 		}
 	}
 	return nil
+}
+
+// copyWithConcurrency runs N shard pipelines in parallel for a single table.
+// Each shard reads a different PK range from the source and writes via its own
+// COPY session to PostgreSQL, using a dedicated connection from the pool.
+// When one shard fails, the others are cancelled via context.
+func (m *Migration) copyWithConcurrency(ctx context.Context, shards []source.Source, tableName string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(shards))
+
+	for _, shard := range shards {
+		wg.Add(1)
+		go func(s source.Source) {
+			defer wg.Done()
+			pipe := pipeline.New(m.cfg, s, m.pool, m.mon, m.targetSchema, tableName)
+			if err := pipe.Run(ctx); err != nil {
+				errCh <- err
+				cancel()
+			}
+		}(shard)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Return first non-cancel error; skip context.Canceled which can
+	// arrive from goroutines that observed the cancel() from another shard.
+	var firstErr error
+	for err := range errCh {
+		if err == nil {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !errors.Is(err, context.Canceled) {
+			return err
+		}
+	}
+	return firstErr
 }

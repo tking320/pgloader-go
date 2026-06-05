@@ -1,0 +1,31 @@
+LOAD DATABASE
+     FROM mysql://root:password@127.0.0.1:3306/sakila
+     INTO postgresql://localhost:5432/sakila
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, truncate, batch size = 10000, batch concurrency = 2,
+          prefetch rows = 5000, on error stop
+
+     SET maintenance_work_mem to '128MB',
+         work_mem to '64MB',
+         client_encoding to 'UTF8'
+
+     CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+          type date to date drop not null drop default using zero-dates-to-null,
+          type tinyint to smallint,
+          type float to double precision drop typemod,
+          type year to smallint
+
+     MATERIALIZE ALL VIEWS
+
+     INCLUDING ONLY TABLE NAMES MATCHING ~/actor/, ~/film/, 'customer', 'payment'
+
+     EXCLUDING TABLE NAMES MATCHING ~/tmp_/, 'test_%'
+
+     BEFORE LOAD DO
+     $$ create schema if not exists sakila; $$,
+     $$ alter database sakila set search_path to sakila, public; $$
+
+     AFTER LOAD DO
+     $$ create index on sakila.film (title); $$,
+     $$ analyze sakila.customer; $$;

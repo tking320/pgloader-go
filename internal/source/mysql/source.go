@@ -6,12 +6,12 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"time"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tking320/pgloader-go/internal/cast"
 	"github.com/tking320/pgloader-go/internal/catalog"
 	"github.com/tking320/pgloader-go/internal/source"
@@ -31,8 +31,8 @@ type MySQLSource struct {
 	pool *pgxpool.Pool
 
 	// Target schema/table
-	schema  string
-	table   string
+	schema string
+	table  string
 
 	// Schema catalog (populated by FetchMetadata)
 	catalog *catalog.Catalog
@@ -43,7 +43,11 @@ type MySQLSource struct {
 
 	// Concurrency sharding
 	whereClause string // WHERE clause for sharded reads
-	activeTable int // index into schema_.Tables for MapRows
+	activeTable int    // index into schema_.Tables for MapRows
+
+	// Table name filtering (INCLUDING/EXCLUDING)
+	includingOnly []string // patterns from INCLUDING ONLY TABLE NAMES MATCHING
+	excluding     []string // patterns from EXCLUDING TABLE NAMES MATCHING
 }
 
 // New creates a MySQLSource.
@@ -89,6 +93,12 @@ func (s *MySQLSource) Close() error {
 	return nil
 }
 
+// SetTableFilters configures INCLUDING/EXCLUDING table name patterns.
+func (s *MySQLSource) SetTableFilters(including, excluding []string) {
+	s.includingOnly = including
+	s.excluding = excluding
+}
+
 // ---------------------------------------------------------------------------
 // Source interface
 // ---------------------------------------------------------------------------
@@ -132,9 +142,7 @@ func (s *MySQLSource) DataIsPreformatted() bool { return false }
 func (s *MySQLSource) Clone() source.Source {
 	clone := *s
 	clone.db = nil // each clone gets its own connection
-	// Reset catalog for clone (will be set by concurrency support)
-	clone.catalog = nil
-	clone.schema_ = nil
+	// Keep catalog and schema_ shared (read-only) so shards can MapRows
 	return &clone
 }
 
@@ -379,6 +387,13 @@ func (s *MySQLSource) PrepareTarget(ctx context.Context, opts source.PrepareOpti
 	}
 	defer conn.Release()
 
+	// Create target schema if needed and not public
+	if opts.CreateSchemas && s.schema != "" && !strings.EqualFold(s.schema, "public") {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", catalog.QuoteIdent(s.schema))); err != nil {
+			return fmt.Errorf("create schema %s: %w", s.schema, err)
+		}
+	}
+
 	for _, t := range s.schema_.Tables {
 		if opts.IncludeDrop {
 			if _, err := conn.Exec(ctx, t.DropTableSQL()); err != nil {
@@ -444,6 +459,21 @@ func (s *MySQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 		if opts.ResetSequences {
 			if err := s.resetSequences(ctx, conn, t); err != nil {
 				return err
+			}
+		}
+
+		if opts.Comments {
+			if sql := t.TableCommentSQL(); sql != "" {
+				if _, err := conn.Exec(ctx, sql); err != nil {
+					return fmt.Errorf("comment on table %s: %w\nSQL: %s", t.Name, err, sql)
+				}
+			}
+			for _, col := range t.Columns {
+				if sql := col.ColumnCommentSQL(t); sql != "" {
+					if _, err := conn.Exec(ctx, sql); err != nil {
+						return fmt.Errorf("comment on column %s.%s: %w\nSQL: %s", t.Name, col.Name, err, sql)
+					}
+				}
 			}
 		}
 	}

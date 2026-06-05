@@ -20,21 +20,21 @@ import (
 
 // CSVSource implements source.Source for CSV files.
 type CSVSource struct {
-	FilePath      string
-	TargetName    string
-	Fields        []source.Field
-	Columns       []string
-	Enc           string
-	SkipLines     int
-	HasHeader     bool
-	Delimiter     rune
-	Quote         rune
-	Escape        rune
-	Comment       rune
-	TrimBlanks    bool
-	NullIf        []string
-	LazyQuotes    bool
-	KeepNullIfs   bool // keep empty strings instead of converting to nil
+	FilePath    string
+	TargetName  string
+	Fields      []source.Field
+	Columns     []string
+	Enc         string
+	SkipLines   int
+	HasHeader   bool
+	Delimiter   rune
+	Quote       rune
+	Escape      rune
+	Comment     rune
+	TrimBlanks  bool
+	NullIf      []string
+	LazyQuotes  bool
+	KeepNullIfs bool // keep empty strings instead of converting to nil
 }
 
 // NewCSVSource creates a CSVSource with the given parameters.
@@ -92,10 +92,10 @@ func WithLazyQuotes(v bool) Option { return func(s *CSVSource) { s.LazyQuotes = 
 // Source interface implementation
 // ---------------------------------------------------------------------------
 
-func (s *CSVSource) TableName() string              { return s.TargetName }
-func (s *CSVSource) Encoding() string               { return s.Enc }
-func (s *CSVSource) DataIsPreformatted() bool        { return false }
-func (s *CSVSource) CopyColumnList() []string        { return s.Columns }
+func (s *CSVSource) TableName() string        { return s.TargetName }
+func (s *CSVSource) Encoding() string         { return s.Enc }
+func (s *CSVSource) DataIsPreformatted() bool { return false }
+func (s *CSVSource) CopyColumnList() []string { return s.Columns }
 func (s *CSVSource) ConcurrencySupport(_ context.Context, _ int) ([]source.Source, error) {
 	return nil, nil // CSV files don't support concurrent sharding
 }
