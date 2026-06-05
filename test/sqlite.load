@@ -13,6 +13,7 @@ LOAD DATABASE
          standard_conforming_strings to 'on',
          search_path to 'public'
 
+     -- Integer types: SQLite INTEGER can be 1-8 bytes → bigint; auto_increment → bigserial
      CAST type integer to bigint drop typemod,
           type integer auto_increment to bigserial drop typemod using int-to-id,
           type tinyint to smallint drop typemod,
@@ -20,20 +21,26 @@ LOAD DATABASE
           type mediumint to integer drop typemod,
           type bigint to bigint drop typemod,
           type int to integer drop typemod,
+          -- Float types: preserve precision
           type real to real drop typemod,
           type float to float drop typemod,
           type double to double precision drop typemod,
+          -- Decimal types: preserve typemod
           type numeric to numeric($mod),
           type decimal to decimal($mod),
+          -- String types: text for all variants
           type text to text drop typemod,
           type varchar to text drop typemod,
           type nvarchar to text drop typemod,
           type char to text drop typemod,
           type nchar to text drop typemod,
           type clob to text drop typemod,
+          -- Binary types: blob → bytea
           type blob to bytea drop typemod,
+          -- Boolean types: numeric boolean → native boolean
           type boolean to boolean drop typemod,
           type bool to boolean drop typemod,
+          -- Date/time types
           type datetime to timestamptz drop typemod using zero-dates-to-null,
           type timestamp to timestamp drop typemod,
           type date to date drop typemod,

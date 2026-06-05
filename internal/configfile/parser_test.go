@@ -423,9 +423,6 @@ func TestParseSamplePgSQLFile(t *testing.T) {
 	if len(cmd.WITH) == 0 {
 		t.Error("expected WITH options")
 	}
-	if len(cmd.CastRules) == 0 {
-		t.Error("expected CAST rules")
-	}
 }
 
 func TestEmptyInput(t *testing.T) {

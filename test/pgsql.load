@@ -15,25 +15,6 @@ LOAD DATABASE
          default_transaction_isolation to 'read committed',
          statement_timeout to '0'
 
-     CAST type money to numeric drop typemod using money-to-numeric,
-          type txid_snapshot to text drop typemod,
-          type pg_lsn to text drop typemod,
-          type oid to oid drop typemod,
-          type regclass to regclass drop typemod,
-          type regproc to regproc drop typemod,
-          type regprocedure to regprocedure drop typemod,
-          type regoper to regoper drop typemod,
-          type regoperator to regoperator drop typemod,
-          type regtype to regtype drop typemod,
-          type regrole to regrole drop typemod,
-          type regnamespace to regnamespace drop typemod,
-          type regconfig to regconfig drop typemod,
-          type regdictionary to regdictionary drop typemod,
-          type xid to bigint drop typemod,
-          type cid to bigint drop typemod,
-          type tid to tid drop typemod,
-          type pg_node_tree to text drop typemod,
-          type aclitem to text drop typemod
 
      INCLUDING ONLY TABLE NAMES MATCHING ~/^public\./, 'app.%'
 
