@@ -167,10 +167,10 @@ func (s *SQLiteSource) MapRows(ctx context.Context, processRow func(source.Row) 
 	// Build SELECT with proper quoting
 	colNames := make([]string, len(t.Columns))
 	for i, col := range t.Columns {
-		colNames[i] = fmt.Sprintf(`"%s"`, col.Name)
+		colNames[i] = quoteIdent(col.Name)
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM \"%s\"", strings.Join(colNames, ", "), t.Name)
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(colNames, ", "), quoteIdent(t.Name))
 	if s.whereClause != "" {
 		query += " WHERE " + s.whereClause
 	}
@@ -222,6 +222,11 @@ func (s *SQLiteSource) MapRows(ctx context.Context, processRow func(source.Row) 
 	}
 
 	return rows.Err()
+}
+
+// quoteIdent quotes a SQL identifier, doubling any embedded double-quotes.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // convertSQLiteValue normalizes sqlite3 driver return values to standard Go types.
