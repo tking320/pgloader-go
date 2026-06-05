@@ -18,6 +18,7 @@ import (
 	"github.com/tking320/pgloader-go/internal/source/csv"
 	"github.com/tking320/pgloader-go/internal/source/mysql"
 	"github.com/tking320/pgloader-go/internal/source/pgsql"
+	"github.com/tking320/pgloader-go/internal/source/sqlite"
 )
 
 // ExecuteConfigFile parses and executes a .load configuration file.
@@ -131,6 +132,8 @@ func ExecuteCommand(ctx context.Context, cmd *LoadCommand, cli CLIOptions) error
 		err = execPgsql(ctx, cfg, mon, pool, cmd, schema)
 	case SourceCSV:
 		err = execCSV(ctx, cfg, mon, pool, cmd, schema)
+	case SourceSQLite:
+		err = execSQLite(ctx, cfg, mon, pool, cmd, schema)
 	default:
 		return fmt.Errorf("unsupported load type: %v", cmd.LoadType)
 	}
@@ -247,6 +250,39 @@ func execCSV(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 
 	pipe := pipeline.New(cfg, src, pool, mon, schema, cmd.TargetTable)
 	return pipe.Run(ctx)
+}
+
+// execSQLite runs a SQLite-to-PostgreSQL migration from a parsed command.
+func execSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
+	pool *pgxpool.Pool, cmd *LoadCommand, schema string) error {
+
+	// URI format: sqlite:///path/to/file.db
+	// Remove the "sqlite://" prefix (3 slashes = absolute path, 2 = relative)
+	path := strings.TrimPrefix(cmd.SourceURI, "sqlite://")
+	if path == ":memory:" {
+		// In-memory database (mostly for testing)
+	}
+	if path == "" {
+		return fmt.Errorf("sqlite filename required in URI: %s", cmd.SourceURI)
+	}
+
+	if schema == "" {
+		schema = "public"
+	}
+
+	castEngine := cast.NewEngine(cast.SQLiteDefaultRules())
+	src := sqlite.New(path, schema, "", pool, castEngine)
+
+	if err := src.Connect(ctx); err != nil {
+		return fmt.Errorf("sqlite connect: %w", err)
+	}
+	defer src.Close()
+
+	// Apply INCLUDING/EXCLUDING table name filters
+	src.SetTableFilters(cmd.IncludingOnly, cmd.Excluding)
+
+	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	return mig.Run(ctx)
 }
 
 // parseCSVWithOptions extracts CSV-specific settings from WITH options.
