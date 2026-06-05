@@ -18,6 +18,10 @@ UNION ALL
 SELECT 'child', COUNT(*)::text FROM child
 UNION ALL
 SELECT 'bit_test', COUNT(*)::text FROM bit_test
+UNION ALL
+SELECT 'Test"Tbl', COUNT(*)::text FROM "Test""Tbl"
+UNION ALL
+SELECT 'test Tbl', COUNT(*)::text FROM "test Tbl"
 ORDER BY table_name;
 
 -- Check CAST results: tinyint(1) → boolean

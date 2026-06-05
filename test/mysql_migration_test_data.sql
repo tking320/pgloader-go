@@ -8,6 +8,8 @@ DROP TABLE IF EXISTS big_serial_test;
 DROP TABLE IF EXISTS enum_test;
 DROP TABLE IF EXISTS json_data;
 DROP TABLE IF EXISTS basic_types;
+DROP TABLE IF EXISTS `test Tbl`;
+DROP TABLE IF EXISTS `Test"Tbl`;
 
 -- MySQL test data for MySQL-to-PostgreSQL migration CI test
 -- Exercises CAST rules and type mappings
@@ -113,3 +115,18 @@ INSERT INTO bit_test (flag, flags) VALUES
     (b'1', b'11111111'),
     (b'0', b'00000000'),
     (b'1', b'10101010');
+
+-- Special table names: mixed case, double quote, space
+CREATE TABLE `Test"Tbl` (
+    id INTEGER AUTO_INCREMENT PRIMARY KEY,
+    val VARCHAR(50)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `Test"Tbl` (val) VALUES ('quote_test'), ('mixed_case');
+
+CREATE TABLE `test Tbl` (
+    id INTEGER AUTO_INCREMENT PRIMARY KEY,
+    val VARCHAR(50)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `test Tbl` (val) VALUES ('space_test'), ('in_name');
