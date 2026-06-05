@@ -2,7 +2,7 @@ APP_NAME   = pgloader
 BUILDDIR   = build
 GO         = go
 
-.PHONY: all build test test-short lint fmt clean check
+.PHONY: all build test test-short lint fmt clean check check-pg-pg check-mysql-pg check-integration
 
 all: build
 
@@ -21,8 +21,39 @@ lint:
 fmt:
 	$(GO) fmt ./...
 
-check: lint build test
+check: lint build test check-pg-pg check-mysql-pg
 	$(GO) build -race ./...
+
+# ---------------------------------------------------------------------------
+# Integration tests (require database containers)
+# ---------------------------------------------------------------------------
+
+PG_SRC  ?= postgresql://test:test@localhost:5432/sourcedb
+PG_TGT  ?= postgresql://test:test@localhost:5433/targetdb
+MYSQL_URI ?= mysql://root:test@127.0.0.1:3306/sourcedb
+
+check-integration: check-pg-pg check-mysql-pg
+
+check-pg-pg: build
+	@echo "=== PG -> PG integration test ==="
+	@command -v psql >/dev/null 2>&1 || { echo "SKIP: psql not installed"; exit 0; }
+	@echo "  Loading test data into source..."
+	@psql "$(PG_SRC)" -f test/pgsql_migration_test_data.sql -q >/dev/null 2>&1 || { echo "SKIP: source PG unreachable at $(PG_SRC)"; exit 0; }
+	@echo "  Running migration..."
+	./build/bin/pgloader "$(PG_SRC)" "$(PG_TGT)" --with "foreign keys"
+	@echo "  Verifying migration..."
+	psql "$(PG_TGT)" -f test/pgsql_migration_verify.sql -t -A
+
+check-mysql-pg: build
+	@echo "=== MySQL -> PG integration test ==="
+	@command -v mysql >/dev/null 2>&1 || { echo "SKIP: mysql client not installed"; exit 0; }
+	@command -v psql >/dev/null 2>&1 || { echo "SKIP: psql not installed"; exit 0; }
+	@echo "  Loading test data into source..."
+	@mysql -h 127.0.0.1 -u root -ptest sourcedb < test/mysql_migration_test_data.sql 2>/dev/null || { echo "SKIP: MySQL unreachable at 127.0.0.1:3306"; exit 0; }
+	@echo "  Running migration..."
+	./build/bin/pgloader "$(MYSQL_URI)" "$(PG_TGT)" --with "foreign keys"
+	@echo "  Verifying migration..."
+	psql "$(PG_TGT)" -f test/mysql_migration_verify.sql -t -A
 
 clean:
 	rm -rf $(BUILDDIR)
