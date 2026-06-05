@@ -128,6 +128,13 @@ func (s *SQLiteSource) fetchTableMetadata(ctx context.Context, tableName string)
 	}
 	t.Indexes = indexes
 
+	// Ensure a PK index entry exists for any column with IsPK=true.
+	// SQLite INTEGER PRIMARY KEY uses implicit rowid with no backing B-tree,
+	// so no index entry is created by fetchIndexes. Without a PK index,
+	// CompleteTarget can't run ALTER TABLE ADD PRIMARY KEY, which breaks
+	// foreign key references on the PostgreSQL target.
+	ensurePKIndex(tableName, columns, &t.Indexes, s.schema)
+
 	// Fetch foreign keys
 	fkeys, err := s.fetchForeignKeys(ctx, tableName)
 	if err != nil {
@@ -252,9 +259,14 @@ func (s *SQLiteSource) fetchIndexes(ctx context.Context, tableName string) ([]*c
 			idxRows.Close()
 			return nil, fmt.Errorf("scan index: %w", err)
 		}
-		// Keep auto-generated indexes (sqlite_autoindex_*) — they represent
-		// PRIMARY KEY and UNIQUE constraints that must be created on the
-		// PostgreSQL side for foreign key references to work.
+		// Skip auto-generated indexes (sqlite_autoindex_*) — they represent
+		// implicit rowid or constraint markers, not real index objects.
+		// INTEGER PRIMARY KEY uses rowid directly with no backing B-tree,
+		// and PRAGMA index_info returns empty for these entries.
+		// We synthesize PK index entries below if needed.
+		if strings.HasPrefix(r.Name, "sqlite_autoindex_") {
+			continue
+		}
 		idxList = append(idxList, idxInfo{
 			Name:   r.Name,
 			Unique: r.Unique != 0,
@@ -447,6 +459,42 @@ func (s *SQLiteSource) detectAutoIncrement(ctx context.Context, tableName string
 	}
 
 	return nil
+}
+
+// ensurePKIndex adds a synthetic PK index entry if columns are marked IsPK
+// but no PK index was created by fetchIndexes. This handles SQLite's INTEGER
+// PRIMARY KEY which uses implicit rowid with no backing index object.
+func ensurePKIndex(tableName string, columns []*catalog.Column, indexes *[]*catalog.Index, schema string) {
+	hasPKIndex := false
+	for _, idx := range *indexes {
+		if idx.Primary {
+			hasPKIndex = true
+			break
+		}
+	}
+	if hasPKIndex {
+		return
+	}
+
+	var pkCols []string
+	for _, col := range columns {
+		if col.IsPK {
+			pkCols = append(pkCols, col.Name)
+		}
+	}
+	if len(pkCols) == 0 {
+		return
+	}
+
+	*indexes = append(*indexes, &catalog.Index{
+		Name:    tableName + "_pkey",
+		Type:    "btree",
+		Schema:  schema,
+		Table:   tableName,
+		Primary: true,
+		Unique:  true,
+		Columns: pkCols,
+	})
 }
 
 // ---------------------------------------------------------------------------
