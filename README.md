@@ -247,6 +247,75 @@ make build
 - PostgreSQL target
 - MySQL source (optional, for MySQL migrations)
 
+## Testing
+
+### Start test databases (Docker)
+
+Three containers are needed for integration testing:
+
+```bash
+# PostgreSQL source (port 5434 — avoids conflict with local postgres on 5432)
+docker run -d \
+  --name pgloader-pg-src \
+  -e POSTGRES_USER=test \
+  -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=sourcedb \
+  -p 5434:5432 \
+  postgres:16
+
+# PostgreSQL target (port 5433)
+docker run -d \
+  --name pgloader-pg-tgt \
+  -e POSTGRES_USER=test \
+  -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=targetdb \
+  -p 5433:5432 \
+  postgres:16
+
+# MySQL source (port 3306)
+docker run -d \
+  --name pgloader-mysql-src \
+  -e MYSQL_ROOT_PASSWORD=test \
+  -e MYSQL_DATABASE=sourcedb \
+  -p 3306:3306 \
+  mysql:8
+```
+
+### Run all checks
+
+```bash
+# Unit tests + lint + build + integration tests (DBs unavailable = skip)
+make check
+```
+
+### Run individual integration tests
+
+```bash
+# PostgreSQL → PostgreSQL migration
+make check-pg-pg
+
+# MySQL → PostgreSQL migration
+make check-mysql-pg
+```
+
+### PG→PG test flow
+
+1. Creates tables with various PostgreSQL types (JSONB, enums, money, arrays, FKs, indexes) in the source database
+2. Runs `pgloader` to migrate schema and data to the target
+3. Verifies row counts, enum types, indexes, foreign keys, and money type migration
+
+### MySQL→PG test flow
+
+1. Creates tables with MySQL types (TINYINT, ENUM, UNSIGNED BIGINT, JSON, BIT, DATETIME, FKs) in the source database
+2. Runs `pgloader` with CAST rules to migrate to PostgreSQL
+3. Verifies row counts and type mapping correctness (tinyint→bool, unsigned→numeric, enum→text, auto_increment→serial, FK preservation)
+
+### Clean up
+
+```bash
+docker rm -f pgloader-pg-src pgloader-pg-tgt pgloader-mysql-src
+```
+
 ## Roadmap
 
 - [x] CSV source with delimiter guessing
