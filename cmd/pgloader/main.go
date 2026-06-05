@@ -34,6 +34,7 @@ import (
 	"github.com/tking320/pgloader-go/internal/source/csv"
 	"github.com/tking320/pgloader-go/internal/source/mysql"
 	"github.com/tking320/pgloader-go/internal/source/pgsql"
+	"github.com/tking320/pgloader-go/internal/source/sqlite"
 )
 
 func main() {
@@ -257,6 +258,9 @@ func execute(ctx context.Context) error {
 					return fmt.Errorf("target table required: use --table")
 				}
 				loadErr = runCSV(ctx, cfg, mon, pool, sourceArg, schema, table, delimiter, hasHeader, skipLines, guess, enc, colsFlag)
+			case sourceType == "sqlite" ||
+				(sourceType == "" && strings.HasPrefix(sourceArg, "sqlite://")):
+				loadErr = runSQLite(ctx, cfg, mon, pool, sourceArg, schema, table)
 			default:
 				return fmt.Errorf("unsupported source type: %s", sourceType)
 			}
@@ -311,7 +315,7 @@ Examples:
 	rootCmd.Flags().String("before", "", "SQL file to run before load")
 	rootCmd.Flags().String("after", "", "SQL file to run after load")
 	rootCmd.Flags().String("cast", "", "cast rules file")
-	rootCmd.Flags().String("type", "", "source type (csv, mysql, postgresql, pg)")
+	rootCmd.Flags().String("type", "", "source type (csv, mysql, postgresql, pg, sqlite)")
 	rootCmd.Flags().Bool("foreign-keys", true, "create foreign keys after data load")
 	rootCmd.Flags().MarkHidden("foreign-keys")
 	rootCmd.Flags().Bool("include-drop", false, "DROP TABLE IF EXISTS before CREATE TABLE")
@@ -456,6 +460,34 @@ func runPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 
 	if err := src.Connect(ctx); err != nil {
 		return fmt.Errorf("pgsql connect: %w", err)
+	}
+	defer src.Close()
+
+	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	return mig.Run(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// SQLite source runner
+// ---------------------------------------------------------------------------
+
+func runSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
+	pool *pgxpool.Pool, sourceArg, schema, table string) error {
+
+	path := strings.TrimPrefix(sourceArg, "sqlite://")
+	if path == "" {
+		return fmt.Errorf("sqlite filename required in URI: %s", sourceArg)
+	}
+
+	if schema == "" {
+		schema = "public"
+	}
+
+	castEngine := cast.NewEngine(cast.SQLiteDefaultRules())
+	src := sqlite.New(path, schema, table, pool, castEngine)
+
+	if err := src.Connect(ctx); err != nil {
+		return fmt.Errorf("sqlite connect: %w", err)
 	}
 	defer src.Close()
 
