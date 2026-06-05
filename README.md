@@ -1,6 +1,6 @@
 # pgloader-go
 
-Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL data loading tool. Migrate data from MySQL, PostgreSQL, and CSV files into PostgreSQL with automatic schema migration, parallel COPY pipelines, and per-row error handling.
+Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL data loading tool. Migrate data from SQLite, MySQL, PostgreSQL, and CSV files into PostgreSQL with automatic schema migration, parallel COPY pipelines, and per-row error handling.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL dat
 │                       CLI (cobra)                         │
 │  cmd/pgloader/main.go                                    │
 └─────┬──────────────────────┬──────────────────────┬───────┘
-      │ CSV                  │ MySQL/PG              │
+      │ CSV               │ SQLite/MySQL/PG        │
       ▼                      ▼                       ▼
 ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐
 │  Pipeline     │   │  Orchestrator     │   │  Orchestrator     │
@@ -47,6 +47,7 @@ Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL dat
 | [`internal/catalog`](internal/catalog) | Data model for schemas, tables, columns, indexes, FKs; DDL generation |
 | [`internal/source`](internal/source) | `Source` and `DbSource` interfaces |
 | [`internal/source/csv`](internal/source/csv) | CSV file reader with delimiter guessing |
+| [`internal/source/sqlite`](internal/source/sqlite) | SQLite schema introspection + data reader |
 | [`internal/source/mysql`](internal/source/mysql) | MySQL schema introspection + data reader |
 | [`internal/source/pgsql`](internal/source/pgsql) | PostgreSQL schema introspection + COPY-based reader |
 | [`internal/cast`](internal/cast) | CAST rule engine — MySQL/PG type mapping + transform functions |
@@ -65,7 +66,7 @@ CSV file → MapRows(row by row) → FormatRowToCopyText → batch
   → error → RetryBatch (binary search bad rows) → retry good rows
 ```
 
-### Database migration (MySQL / PostgreSQL)
+### Database migration (SQLite / MySQL / PostgreSQL)
 
 ```
 FetchMetadata (introspect source schema)
@@ -82,6 +83,12 @@ FetchMetadata (introspect source schema)
 ```bash
 # CSV import
 pgloader data.csv postgresql://localhost/mydb --table mytable --header
+
+# SQLite to PostgreSQL
+pgloader sqlite:///path/to/db.sqlite postgresql://localhost/target
+
+# SQLite to PostgreSQL (explicit type)
+pgloader /path/to/db.sqlite postgresql://localhost/target --type sqlite
 
 # MySQL to PostgreSQL
 pgloader mysql://user@host/dbname postgresql://localhost/target
@@ -141,7 +148,7 @@ LOAD DATABASE
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--table` | — | Target table name (required for CSV) |
-| `--type` | auto | Source type: `csv`, `mysql`, `postgresql`, `pg` |
+| `--type` | auto | Source type: `csv`, `sqlite`, `mysql`, `postgresql`, `pg` |
 | `--delimiter` | `,` | CSV delimiter character |
 | `--header` | `false` | CSV file has header row |
 | `--skip-lines` | `0` | Lines to skip at start of file |
@@ -232,6 +239,18 @@ LOAD DATABASE
 | `txid_snapshot` | `text` | — |
 | `pg_lsn` | `text` | — |
 
+### SQLite → PostgreSQL
+
+| SQLite type | PostgreSQL type | Notes |
+|-------------|----------------|-------|
+| `integer primary key` | `bigserial` | Auto-increment via implicit rowid |
+| `integer` | `bigint` | — |
+| `real` | `double precision` | — |
+| `text` | `text` | — |
+| `blob` | `bytea` | — |
+| `numeric` | `numeric` | — |
+| `datetime` | `timestamptz` | — |
+
 ## Build
 
 ```bash
@@ -245,6 +264,7 @@ make build
 
 - Go 1.20+
 - PostgreSQL target
+- SQLite source (requires CGO, `mattn/go-sqlite3`)
 - MySQL source (optional, for MySQL migrations)
 
 ## Testing
@@ -296,6 +316,9 @@ make check-pg-pg
 
 # MySQL → PostgreSQL migration
 make check-mysql-pg
+
+# SQLite → PostgreSQL migration
+make check-sqlite-pg
 ```
 
 ### PG→PG test flow
@@ -309,6 +332,12 @@ make check-mysql-pg
 1. Creates tables with MySQL types (TINYINT, ENUM, UNSIGNED BIGINT, JSON, BIT, DATETIME, FKs) in the source database
 2. Runs `pgloader` with CAST rules to migrate to PostgreSQL
 3. Verifies row counts and type mapping correctness (tinyint→bool, unsigned→numeric, enum→text, auto_increment→serial, FK preservation)
+
+### SQLite→PG test flow
+
+1. Creates tables with SQLite types (INTEGER PRIMARY KEY, TEXT, REAL, DATETIME, BLOB, FKs, special table names) in a `.sqlite` file
+2. Runs `pgloader` via `.load` config file to migrate to PostgreSQL
+3. Verifies row counts, auto-increment behavior, FK preservation, and special character handling in table names
 
 ### Clean up
 
@@ -324,7 +353,7 @@ docker rm -f pgloader-pg-src pgloader-pg-tgt pgloader-mysql-src
 - [x] CAST rule engine
 - [x] Batch error retry (binary search)
 - [x] Summary report matching native pgloader format
-- [ ] SQLite source
+- [x] SQLite source
 - [ ] MSSQL source
 - [ ] Fixed-width / DBF / IXF sources
 - [x] `.load` command file parser
