@@ -62,6 +62,38 @@ func TestParseMySQLDatabase(t *testing.T) {
 	}
 }
 
+func TestParseSQLiteURI(t *testing.T) {
+	input := `LOAD DATABASE
+	     FROM sqlite:///tmp/test.db
+	     INTO postgresql://localhost:5432/target
+
+	     WITH include drop, create tables
+
+	     CAST type datetime to timestamptz,
+	          type tinyint to smallint
+
+	     INCLUDING ONLY TABLE NAMES MATCHING 'test_%';
+	`
+
+	cmds, err := ParseFile(input)
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+	if len(cmds.Commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds.Commands))
+	}
+	cmd := cmds.Commands[0]
+	if cmd.LoadType != SourceSQLite {
+		t.Errorf("expected SourceSQLite, got %v", cmd.LoadType)
+	}
+	if cmd.SourceURI != "sqlite:///tmp/test.db" {
+		t.Errorf("expected sqlite:///tmp/test.db, got %s", cmd.SourceURI)
+	}
+	if len(cmd.IncludingOnly) != 1 || cmd.IncludingOnly[0] != "'test_%'" {
+		t.Errorf("expected including ['test_%%'], got %v", cmd.IncludingOnly)
+	}
+}
+
 func TestParsePgSQLDatabase(t *testing.T) {
 	input := `LOAD DATABASE
      FROM pgsql://localhost/pgloader
