@@ -21,7 +21,7 @@ lint:
 fmt:
 	$(GO) fmt ./...
 
-check: lint build test check-pg-pg check-mysql-pg
+check: lint build test check-pg-pg check-mysql-pg check-sqlite-pg
 	$(GO) build -race ./...
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ PG_SRC  ?= postgresql://test:test@localhost:5434/sourcedb
 PG_TGT  ?= postgresql://test:test@localhost:5433/targetdb
 MYSQL_URI ?= mysql://root:test@127.0.0.1:3306/sourcedb
 
-check-integration: check-pg-pg check-mysql-pg
+check-integration: check-pg-pg check-mysql-pg check-sqlite-pg
 
 check-pg-pg: build
 	@echo "=== PG -> PG integration test ==="
@@ -58,6 +58,28 @@ check-mysql-pg: build
 	./build/bin/pgloader "$(MYSQL_URI)" "$(PG_TGT)" --with "foreign keys"
 	@echo "  Verifying migration..."
 	psql "$(PG_TGT)" -f test/mysql_migration_verify.sql -t -A
+
+# ---------------------------------------------------------------------------
+# SQLite -> PG integration test
+# ---------------------------------------------------------------------------
+
+SQLITE_TEST_DB  ?= /tmp/pgloader_sqlite_test.db
+
+check-sqlite-pg: build
+	@echo "=== SQLite -> PG integration test ==="
+	@echo "  Cleaning target database..."
+	@psql "$(PG_TGT)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" -q >/dev/null 2>&1 || true
+	@command -v sqlite3 >/dev/null 2>&1 || { echo "SKIP: sqlite3 not installed"; exit 0; }
+	@command -v psql >/dev/null 2>&1 || { echo "SKIP: psql not installed"; exit 0; }
+	@echo "  Creating test SQLite database..."
+	@rm -f "$(SQLITE_TEST_DB)"
+	@sqlite3 "$(SQLITE_TEST_DB)" < test/sqlite_migration_test_data.sql 2>/dev/null
+	@echo "  Running migration via .load config..."
+	./build/bin/pgloader test/sqlite.load
+	@echo "  Verifying migration..."
+	psql "$(PG_TGT)" -f test/sqlite_migration_verify.sql -t -A
+	@echo "  Cleaning up..."
+	@rm -f "$(SQLITE_TEST_DB)"
 
 clean:
 	rm -rf $(BUILDDIR)

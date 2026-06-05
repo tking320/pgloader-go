@@ -1,0 +1,17 @@
+LOAD DATABASE
+     FROM sqlite:///tmp/pgloader_sqlite_test.db
+     INTO postgresql://test:test@localhost:5433/targetdb
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, batch size = 1000, batch concurrency = 1
+
+     SET client_encoding to 'UTF8'
+
+     CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+          type tinyint to smallint
+
+     BEFORE LOAD DO
+     $$ create schema if not exists public; $$
+
+     AFTER LOAD DO
+     $$ analyze basic_types; $$;
