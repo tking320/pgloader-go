@@ -252,10 +252,9 @@ func (s *SQLiteSource) fetchIndexes(ctx context.Context, tableName string) ([]*c
 			idxRows.Close()
 			return nil, fmt.Errorf("scan index: %w", err)
 		}
-		// Skip auto-generated indexes (sqlite_autoindex_*)
-		if strings.HasPrefix(r.Name, "sqlite_autoindex_") {
-			continue
-		}
+		// Keep auto-generated indexes (sqlite_autoindex_*) — they represent
+		// PRIMARY KEY and UNIQUE constraints that must be created on the
+		// PostgreSQL side for foreign key references to work.
 		idxList = append(idxList, idxInfo{
 			Name:   r.Name,
 			Unique: r.Unique != 0,
