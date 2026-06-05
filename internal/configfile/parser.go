@@ -382,6 +382,8 @@ func parseCommand(s string) (*LoadCommand, error) {
 		cmd.LoadType = SourceMySQL
 	} else if strings.HasPrefix(cmd.SourceURI, "postgresql://") || strings.HasPrefix(cmd.SourceURI, "postgres://") || strings.HasPrefix(cmd.SourceURI, "pgsql://") {
 		cmd.LoadType = SourcePostgreSQL
+	} else if strings.HasPrefix(cmd.SourceURI, "sqlite://") {
+		cmd.LoadType = SourceSQLite
 	} else {
 		return nil, fmt.Errorf("unsupported source URI scheme: %s", cmd.SourceURI)
 	}

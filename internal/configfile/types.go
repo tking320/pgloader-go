@@ -9,6 +9,7 @@ const (
 	SourceMySQL      SourceType = iota // MySQL -> PostgreSQL
 	SourcePostgreSQL                   // PostgreSQL -> PostgreSQL
 	SourceCSV                          // CSV file -> PostgreSQL
+	SourceSQLite                       // SQLite -> PostgreSQL
 )
 
 // LoadCommand represents a single LOAD command parsed from a .load file.
