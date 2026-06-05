@@ -1,6 +1,7 @@
 package configfile
 
 import (
+	"os"
 	"reflect"
 	"testing"
 )
@@ -343,6 +344,87 @@ func TestIncludingOnlyTableNames(t *testing.T) {
 	}
 	if cmd.IncludingOnly[2] != "'customer_%'" {
 		t.Fatalf("expected IncludingOnly[2]='customer_%%', got %q", cmd.IncludingOnly[2])
+	}
+}
+
+func TestParseSampleMySQLFile(t *testing.T) {
+	data, err := os.ReadFile("../../test/mysql.load")
+	if err != nil {
+		t.Fatalf("read sample file: %v", err)
+	}
+	cf, err := ParseFile(string(data))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	cmd := cf.Commands[0]
+	if cmd.LoadType != SourceMySQL {
+		t.Errorf("expected SourceMySQL, got %v", cmd.LoadType)
+	}
+	if len(cmd.WITH) == 0 {
+		t.Error("expected WITH options")
+	}
+	if len(cmd.SET) == 0 {
+		t.Error("expected SET options")
+	}
+	if len(cmd.CastRules) == 0 {
+		t.Error("expected CAST rules")
+	}
+	if len(cmd.IncludingOnly) == 0 {
+		t.Error("expected INCLUDING patterns")
+	}
+	if len(cmd.Excluding) == 0 {
+		t.Error("expected EXCLUDING patterns")
+	}
+	if len(cmd.BeforeLoad) == 0 {
+		t.Error("expected BEFORE LOAD")
+	}
+	if len(cmd.AfterLoad) == 0 {
+		t.Error("expected AFTER LOAD")
+	}
+	if len(cmd.MaterializeViews) == 0 {
+		t.Error("expected MATERIALIZE VIEWS")
+	}
+}
+
+func TestParseSampleSQLiteFile(t *testing.T) {
+	data, err := os.ReadFile("../../test/sqlite.load")
+	if err != nil {
+		t.Fatalf("read sample file: %v", err)
+	}
+	cf, err := ParseFile(string(data))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	cmd := cf.Commands[0]
+	if cmd.LoadType != SourceSQLite {
+		t.Errorf("expected SourceSQLite, got %v", cmd.LoadType)
+	}
+	if len(cmd.WITH) == 0 {
+		t.Error("expected WITH options")
+	}
+	if len(cmd.CastRules) == 0 {
+		t.Error("expected CAST rules")
+	}
+}
+
+func TestParseSamplePgSQLFile(t *testing.T) {
+	data, err := os.ReadFile("../../test/pgsql.load")
+	if err != nil {
+		t.Fatalf("read sample file: %v", err)
+	}
+	cf, err := ParseFile(string(data))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	cmd := cf.Commands[0]
+	if cmd.LoadType != SourcePostgreSQL {
+		t.Errorf("expected SourcePostgreSQL, got %v", cmd.LoadType)
+	}
+	if len(cmd.WITH) == 0 {
+		t.Error("expected WITH options")
+	}
+	if len(cmd.CastRules) == 0 {
+		t.Error("expected CAST rules")
 	}
 }
 

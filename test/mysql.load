@@ -1,0 +1,74 @@
+LOAD DATABASE
+     FROM mysql://root:password@127.0.0.1:3306/sakila
+     INTO postgresql://test:test@localhost:5433/targetdb
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, truncate, comments, triggers,
+          batch size = 10000, batch concurrency = 2, prefetch rows = 5000,
+          batch rows per range = 50000, on error stop
+
+     SET maintenance_work_mem to '128MB',
+         work_mem to '64MB',
+         client_encoding to 'UTF8',
+         standard_conforming_strings to 'on',
+         search_path to 'sakila, public'
+
+     CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+          type timestamp to timestamptz drop default drop not null using zero-dates-to-null,
+          type date to date drop not null drop default using zero-dates-to-null,
+          type tinyint to smallint,
+          type tinyint (1) to boolean using tinyint-to-bool,
+          type bit (1) to boolean using bit-to-bool,
+          type bit to bit varying($mod) using bit-to-binstr,
+          type int auto_increment to serial drop typemod using int-to-id,
+          type int unsigned auto_increment to bigserial drop typemod using int-to-id,
+          type bigint auto_increment to bigserial drop typemod using int-to-id,
+          type int unsigned to bigint drop typemod,
+          type bigint unsigned to numeric(20) drop typemod,
+          type float to float,
+          type double to double precision,
+          type decimal to numeric($mod),
+          type numeric to numeric($mod),
+          type varchar to varchar($mod),
+          type char to char($mod),
+          type tinytext to text drop typemod using remove-null-chars,
+          type text to text drop typemod using remove-null-chars,
+          type mediumtext to text drop typemod using remove-null-chars,
+          type longtext to text drop typemod using remove-null-chars,
+          type tinyblob to bytea drop typemod,
+          type blob to bytea drop typemod,
+          type mediumblob to bytea drop typemod,
+          type longblob to bytea drop typemod,
+          type binary to bytea drop typemod,
+          type varbinary to bytea drop typemod,
+          type enum to text drop typemod,
+          type set to text drop typemod,
+          type json to jsonb drop typemod,
+          type geometry to geometry drop typemod using wkt-to-geometry,
+          type point to point drop typemod using wkt-to-geometry,
+          type linestring to path drop typemod using wkt-to-geometry,
+          type polygon to polygon drop typemod,
+          type year to smallint drop typemod,
+          type time to time drop typemod,
+          type serial to integer drop typemod,
+          type bigserial to bigint drop typemod,
+          type float unsigned to float drop typemod,
+          type real to float,
+          type dec to numeric($mod),
+          type fixed to numeric($mod)
+
+     MATERIALIZE ALL VIEWS
+
+     INCLUDING ONLY TABLE NAMES MATCHING ~/actor/, ~/film/, 'customer', 'payment', 'rental'
+
+     EXCLUDING TABLE NAMES MATCHING ~/tmp_/, 'test_%', ~/_bak$/
+
+     BEFORE LOAD DO
+     $$ create schema if not exists sakila; $$,
+     $$ alter database targetdb set search_path to sakila, public; $$
+
+     AFTER LOAD DO
+     $$ create index if not exists idx_film_title on sakila.film (title); $$,
+     $$ analyze sakila.actor; $$,
+     $$ analyze sakila.film; $$,
+     $$ analyze sakila.customer; $$;

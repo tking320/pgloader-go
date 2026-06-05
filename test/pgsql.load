@@ -1,0 +1,50 @@
+LOAD DATABASE
+     FROM postgresql://test:test@localhost:5434/sourcedb
+     INTO postgresql://test:test@localhost:5433/targetdb
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, truncate, comments, triggers,
+          batch size = 50000, batch concurrency = 4, prefetch rows = 10000,
+          batch rows per range = 100000, on error stop
+
+     SET maintenance_work_mem to '256MB',
+         work_mem to '128MB',
+         client_encoding to 'UTF8',
+         standard_conforming_strings to 'on',
+         search_path to 'public',
+         default_transaction_isolation to 'read committed',
+         statement_timeout to '0'
+
+     CAST type money to numeric drop typemod using money-to-numeric,
+          type txid_snapshot to text drop typemod,
+          type pg_lsn to text drop typemod,
+          type oid to oid drop typemod,
+          type regclass to regclass drop typemod,
+          type regproc to regproc drop typemod,
+          type regprocedure to regprocedure drop typemod,
+          type regoper to regoper drop typemod,
+          type regoperator to regoperator drop typemod,
+          type regtype to regtype drop typemod,
+          type regrole to regrole drop typemod,
+          type regnamespace to regnamespace drop typemod,
+          type regconfig to regconfig drop typemod,
+          type regdictionary to regdictionary drop typemod,
+          type xid to bigint drop typemod,
+          type cid to bigint drop typemod,
+          type tid to tid drop typemod,
+          type pg_node_tree to text drop typemod,
+          type aclitem to text drop typemod
+
+     INCLUDING ONLY TABLE NAMES MATCHING ~/^public\./, 'app.%'
+
+     EXCLUDING TABLE NAMES MATCHING ~/_bak$/, ~/^tmp_/, 'audit_log_%'
+
+     BEFORE LOAD DO
+     $$ create schema if not exists public; $$,
+     $$ create extension if not exists postgis; $$,
+     $$ alter database targetdb set search_path to public; $$
+
+     AFTER LOAD DO
+     $$ analyze; $$,
+     $$ create index concurrently if not exists idx_users_email on public.users (email); $$,
+     $$ create index concurrently if not exists idx_orders_created on public.orders (created_at); $$;
