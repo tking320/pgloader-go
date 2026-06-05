@@ -237,24 +237,39 @@ func (s *SQLiteSource) fetchIndexes(ctx context.Context, tableName string) ([]*c
 	if err != nil {
 		return nil, fmt.Errorf("fetch index list for %s: %w", tableName, err)
 	}
-	defer idxRows.Close()
 
-	var indexes []*catalog.Index
+	// Collect index names first, then close cursor to avoid deadlock
+	// with MaxOpenConns=1 when querying PRAGMA index_info inside the loop.
+	type idxInfo struct {
+		Name   string
+		Unique bool
+		Origin string
+	}
+	var idxList []idxInfo
 	for idxRows.Next() {
 		var r sqliteIndexRow
 		if err := idxRows.Scan(&r.Seq, &r.Name, &r.Unique, &r.Origin, &r.Partial); err != nil {
+			idxRows.Close()
 			return nil, fmt.Errorf("scan index: %w", err)
 		}
-
 		// Skip auto-generated indexes (sqlite_autoindex_*)
 		if strings.HasPrefix(r.Name, "sqlite_autoindex_") {
 			continue
 		}
+		idxList = append(idxList, idxInfo{
+			Name:   r.Name,
+			Unique: r.Unique != 0,
+			Origin: r.Origin,
+		})
+	}
+	idxRows.Close()
 
+	var indexes []*catalog.Index
+	for _, idx := range idxList {
 		// Get index columns via PRAGMA index_info
-		colRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info('%s')", escapeIdent(r.Name)))
+		colRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info('%s')", escapeIdent(idx.Name)))
 		if err != nil {
-			return nil, fmt.Errorf("fetch index info for %s: %w", r.Name, err)
+			return nil, fmt.Errorf("fetch index info for %s: %w", idx.Name, err)
 		}
 
 		var colNames []string
@@ -268,19 +283,44 @@ func (s *SQLiteSource) fetchIndexes(ctx context.Context, tableName string) ([]*c
 		}
 		colRows.Close()
 
-		idx := &catalog.Index{
-			Name:    r.Name,
+		catalogIdx := &catalog.Index{
+			Name:    idx.Name,
 			Type:    "btree",
 			Schema:  s.schema,
 			Table:   tableName,
-			Primary: r.Origin == "pk",
-			Unique:  r.Unique != 0,
+			Primary: idx.Origin == "pk",
+			Unique:  idx.Unique,
 			Columns: colNames,
 		}
-		indexes = append(indexes, idx)
+		indexes = append(indexes, catalogIdx)
 	}
 
-	return indexes, idxRows.Err()
+	if err := idxRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Mark PK columns — if no explicit PK index found, check IsPK from columns
+	hasPKIndex := false
+	for _, idx := range indexes {
+		if idx.Primary {
+			hasPKIndex = true
+			break
+		}
+	}
+	if !hasPKIndex {
+		for _, t := range s.schema_.Tables {
+			if t.Name == tableName {
+				for _, c := range t.Columns {
+					if c.IsPK {
+						hasPKIndex = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return indexes, nil
 }
 
 // ---------------------------------------------------------------------------
