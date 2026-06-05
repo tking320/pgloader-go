@@ -1,3 +1,14 @@
+-- Idempotent: drop tables if they exist for re-runs
+DROP TABLE IF EXISTS child;
+DROP TABLE IF EXISTS parent;
+DROP TABLE IF EXISTS bit_test;
+DROP TABLE IF EXISTS unsigned_test;
+DROP TABLE IF EXISTS date_time_test;
+DROP TABLE IF EXISTS big_serial_test;
+DROP TABLE IF EXISTS enum_test;
+DROP TABLE IF EXISTS json_data;
+DROP TABLE IF EXISTS basic_types;
+
 -- MySQL test data for MySQL-to-PostgreSQL migration CI test
 -- Exercises CAST rules and type mappings
 

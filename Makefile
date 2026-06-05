@@ -28,7 +28,7 @@ check: lint build test check-pg-pg check-mysql-pg
 # Integration tests (require database containers)
 # ---------------------------------------------------------------------------
 
-PG_SRC  ?= postgresql://test:test@localhost:5432/sourcedb
+PG_SRC  ?= postgresql://test:test@localhost:5434/sourcedb
 PG_TGT  ?= postgresql://test:test@localhost:5433/targetdb
 MYSQL_URI ?= mysql://root:test@127.0.0.1:3306/sourcedb
 

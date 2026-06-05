@@ -437,8 +437,9 @@ func (s *MySQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 		}
 	}
 
-	for _, t := range s.schema_.Tables {
-		if opts.CreateIndexes {
+	// First pass: create all indexes (before FKs, so PKs exist for references)
+	if opts.CreateIndexes {
+		for _, t := range s.schema_.Tables {
 			for _, idx := range t.Indexes {
 				sql := idx.CreateIndexSQL()
 				if _, err := conn.Exec(ctx, sql); err != nil {
@@ -446,8 +447,11 @@ func (s *MySQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 				}
 			}
 		}
+	}
 
-		if opts.ForeignKeys {
+	// Second pass: create all foreign keys (after indexes so PKs exist)
+	if opts.ForeignKeys {
+		for _, t := range s.schema_.Tables {
 			for _, fk := range t.ForeignKeys {
 				sql := fk.CreateFKeySQL()
 				if _, err := conn.Exec(ctx, sql); err != nil {
@@ -455,14 +459,20 @@ func (s *MySQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 				}
 			}
 		}
+	}
 
-		if opts.ResetSequences {
+	// Third pass: reset sequences
+	if opts.ResetSequences {
+		for _, t := range s.schema_.Tables {
 			if err := s.resetSequences(ctx, conn, t); err != nil {
 				return err
 			}
 		}
+	}
 
-		if opts.Comments {
+	// Fourth pass: comments
+	if opts.Comments {
+		for _, t := range s.schema_.Tables {
 			if sql := t.TableCommentSQL(); sql != "" {
 				if _, err := conn.Exec(ctx, sql); err != nil {
 					return fmt.Errorf("comment on table %s: %w\nSQL: %s", t.Name, err, sql)

@@ -183,9 +183,14 @@ ORDER BY c.ordinal_position`
 
 			// Adjust default for boolean-typed columns
 			if targetType == "boolean" {
-				if col.Default == "0" {
+				switch col.Default {
+				case "0":
 					col.Default = "false"
-				} else if col.Default == "1" {
+				case "1":
+					col.Default = "true"
+				case "b'0'":
+					col.Default = "false"
+				case "b'1'":
 					col.Default = "true"
 				}
 			}
