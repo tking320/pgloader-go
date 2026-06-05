@@ -36,6 +36,8 @@ check-integration: check-pg-pg check-mysql-pg
 
 check-pg-pg: build
 	@echo "=== PG -> PG integration test ==="
+	@echo "  Cleaning target database..."
+	@psql "$(PG_TGT)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" -q >/dev/null 2>&1 || true
 	@command -v psql >/dev/null 2>&1 || { echo "SKIP: psql not installed"; exit 0; }
 	@echo "  Loading test data into source..."
 	@psql "$(PG_SRC)" -f test/pgsql_migration_test_data.sql -q >/dev/null 2>&1 || { echo "SKIP: source PG unreachable at $(PG_SRC)"; exit 0; }
@@ -46,6 +48,8 @@ check-pg-pg: build
 
 check-mysql-pg: build
 	@echo "=== MySQL -> PG integration test ==="
+	@echo "  Cleaning target database..."
+	@psql "$(PG_TGT)" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" -q >/dev/null 2>&1 || true
 	@command -v mysql >/dev/null 2>&1 || { echo "SKIP: mysql client not installed"; exit 0; }
 	@command -v psql >/dev/null 2>&1 || { echo "SKIP: psql not installed"; exit 0; }
 	@echo "  Loading test data into source..."
