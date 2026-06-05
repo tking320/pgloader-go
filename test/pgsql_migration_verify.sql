@@ -12,6 +12,10 @@ UNION ALL
 SELECT 'logs', COUNT(*) FROM logs
 UNION ALL
 SELECT 'payments', COUNT(*) FROM payments
+UNION ALL
+SELECT 'Test"Tbl', COUNT(*) FROM "Test""Tbl"
+UNION ALL
+SELECT 'test Tbl', COUNT(*) FROM "test Tbl"
 ORDER BY table_name;
 
 -- Verify enum type exists
