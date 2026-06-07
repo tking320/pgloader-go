@@ -1,0 +1,68 @@
+LOAD DATABASE
+     FROM mssql://sa:password@localhost:1433/sourcedb
+     INTO postgresql://test:test@localhost:5433/targetdb
+
+     WITH include drop, create tables, create indexes, reset sequences,
+          foreign keys, truncate, comments, triggers,
+          batch size = 50000, batch concurrency = 4, prefetch rows = 10000,
+          batch rows per range = 100000, on error stop
+
+     SET maintenance_work_mem to '256MB',
+         work_mem to '128MB',
+         client_encoding to 'UTF8',
+         standard_conforming_strings to 'on',
+         search_path to 'dbo,public',
+         default_transaction_isolation to 'read committed',
+         statement_timeout to '0'
+
+     CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+          type datetime2 to timestamptz drop default drop not null using zero-dates-to-null,
+          type datetimeoffset to timestamptz drop default drop not null,
+          type smalldatetime to timestamptz drop default drop not null,
+          type date to date drop default drop not null,
+          type time to time drop default drop not null,
+
+          type char to text drop typemod,
+          type nchar to text drop typemod,
+          type varchar to text drop typemod,
+          type nvarchar to text drop typemod,
+          type ntext to text drop typemod,
+
+          type int to bigint drop typemod,
+          type tinyint to smallint drop typemod,
+          type smallint to smallint drop typemod,
+          type bigint to bigint drop typemod,
+
+          type float to float,
+          type real to real,
+
+          type numeric to numeric,
+          type decimal to numeric,
+
+          type money to numeric drop typemod,
+          type smallmoney to numeric drop typemod,
+
+          type bit to boolean drop typemod using sql-server-bit-to-boolean,
+
+          type uniqueidentifier to uuid drop typemod using sql-server-uniqueidentifier-to-uuid,
+
+          type hierarchyid to bytea drop typemod using byte-vector-to-bytea,
+          type geography to bytea drop typemod using byte-vector-to-bytea,
+
+          type binary to bytea drop typemod using byte-vector-to-bytea,
+          type varbinary to bytea drop typemod using byte-vector-to-bytea,
+          type image to bytea drop typemod using byte-vector-to-bytea
+
+     INCLUDING ONLY TABLE NAMES MATCHING ~/^dbo\./, 'app.%'
+
+     EXCLUDING TABLE NAMES MATCHING ~/_bak$/, ~/^tmp_/, 'audit_log_%'
+
+     BEFORE LOAD DO
+     $$ create schema if not exists dbo; $$,
+     $$ create extension if not exists postgis; $$,
+     $$ alter database targetdb set search_path to dbo, public; $$
+
+     AFTER LOAD DO
+     $$ analyze; $$,
+     $$ create index concurrently if not exists idx_users_email on dbo.users (email); $$,
+     $$ create index concurrently if not exists idx_orders_created on dbo.orders (created_at); $$;

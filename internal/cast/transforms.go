@@ -1,6 +1,9 @@
 package cast
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // TransformFunc is a function that transforms a value during data loading.
 type TransformFunc func(val interface{}) (interface{}, error)
@@ -24,6 +27,14 @@ func GetTransform(name string) TransformFunc {
 		return BitToBinStr
 	case "money-to-numeric":
 		return MoneyToNumeric
+	case "sql-server-bit-to-boolean":
+		return MssqlBitToBoolean
+	case "sql-server-uniqueidentifier-to-uuid":
+		return MssqlUniqueIdentifierToUUID
+	case "float-to-string":
+		return FloatToString
+	case "byte-vector-to-bytea":
+		return ByteVectorToBytea
 	default:
 		return nil
 	}
@@ -315,4 +326,139 @@ func cleanMoneyString(s string) string {
 		result = "-" + result
 	}
 	return result
+}
+
+// MssqlBitToBoolean converts MSSQL bit values (int64 0/1) to PostgreSQL boolean format.
+// 0 → "f", 1 → "t", nil → nil
+var MssqlBitToBoolean TransformFunc = func(val interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case int64:
+		if v == 0 {
+			return "f", nil
+		}
+		return "t", nil
+	case float64:
+		if v == 0 {
+			return "f", nil
+		}
+		return "t", nil
+	case bool:
+		if v {
+			return "t", nil
+		}
+		return "f", nil
+	case []byte:
+		if len(v) > 0 && v[0] == 0 {
+			return "f", nil
+		}
+		return "t", nil
+	case string:
+		if v == "0" || v == "false" {
+			return "f", nil
+		}
+		return "t", nil
+	default:
+		return val, nil
+	}
+}
+
+// MssqlUniqueIdentifierToUUID converts MSSQL uniqueidentifier to PostgreSQL UUID format.
+// Handles both pre-formatted strings and raw 16-byte binary from go-mssqldb.
+var MssqlUniqueIdentifierToUUID TransformFunc = func(val interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case string:
+		return cleanUUID(v), nil
+	case []byte:
+		if len(v) == 16 {
+			// Raw 16-byte GUID binary: reformat as canonical UUID hex string
+			// MSSQL stores GUID in mixed-endian (Data1/Data2/Data3 LE, Data4 BE)
+			return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+				v[3], v[2], v[1], v[0],
+				v[5], v[4],
+				v[7], v[6],
+				v[8], v[9],
+				v[10], v[11], v[12], v[13], v[14], v[15]), nil
+		}
+		return cleanUUID(string(v)), nil
+	default:
+		return val, nil
+	}
+}
+
+func cleanUUID(s string) string {
+	// Strip braces and brackets
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "{")
+	s = strings.TrimSuffix(s, "}")
+	s = strings.TrimPrefix(s, "(")
+	s = strings.TrimSuffix(s, ")")
+	// Lowercase
+	s = strings.ToLower(s)
+	return s
+}
+
+// FloatToString formats float values as strings for COPY protocol compatibility.
+// MSSQL float/real/numeric/decimal/money types need explicit string formatting
+// to avoid precision issues in the COPY text protocol.
+var FloatToString TransformFunc = func(val interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return formatFloat(v), nil
+	case float32:
+		return formatFloat(float64(v)), nil
+	case int64:
+		return formatInt64(v), nil
+	case string:
+		return v, nil
+	case []byte:
+		return string(v), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
+}
+
+// ByteVectorToBytea converts binary data to PostgreSQL bytea hex format.
+// The hex format is: \x followed by hex digits (e.g., \x48656c6c6f).
+var ByteVectorToBytea TransformFunc = func(val interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case []byte:
+		return formatByteaHex(v), nil
+	case string:
+		return val, nil // already a string representation
+	default:
+		return val, nil
+	}
+}
+
+func formatByteaHex(data []byte) string {
+	var b strings.Builder
+	b.WriteString("\\x")
+	hex := "0123456789abcdef"
+	for _, byt := range data {
+		b.WriteByte(hex[byt>>4])
+		b.WriteByte(hex[byt&0x0f])
+	}
+	return b.String()
+}
+
+// formatFloat formats a float64 as a string, using scientific notation for very
+// large/small values and decimal notation otherwise.
+func formatFloat(f float64) string {
+	// Use 'f' format for normal range, 'e' for extreme values
+	if f > 1e15 || f < -1e15 || (f < 1e-10 && f > -1e-10 && f != 0) {
+		return fmt.Sprintf("%e", f)
+	}
+	return fmt.Sprintf("%v", f)
 }

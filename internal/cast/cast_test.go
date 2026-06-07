@@ -258,6 +258,119 @@ func TestPgDefaultRules(t *testing.T) {
 	}
 }
 
+func TestMSSQLDefaultRules(t *testing.T) {
+	engine := NewEngine(MSSQLDefaultRules())
+
+	tests := []struct {
+		name       string
+		typeName   string
+		columnType string
+		extra      string
+		wantType   string
+		wantDrop   bool
+		wantXform  string
+	}{
+		// String types
+		{"char", "char", "char", "", "text", true, ""},
+		{"nchar", "nchar", "nchar", "", "text", true, ""},
+		{"varchar", "varchar", "varchar", "", "text", true, ""},
+		{"nvarchar", "nvarchar", "nvarchar", "", "text", true, ""},
+		{"ntext", "ntext", "ntext", "", "text", true, ""},
+
+		// XML
+		{"xml", "xml", "xml", "", "xml", true, ""},
+
+		// Integer identity
+		{"int identity", "int", "int", "auto_increment", "bigserial", true, ""},
+		{"bigint identity", "bigint", "bigint", "auto_increment", "bigserial", true, ""},
+		{"smallint identity", "smallint", "smallint", "auto_increment", "smallserial", true, ""},
+		{"tinyint identity", "tinyint", "tinyint", "auto_increment", "serial", true, ""},
+
+		// Integer types
+		{"tinyint", "tinyint", "tinyint", "", "smallint", true, ""},
+		{"smallint", "smallint", "smallint", "", "smallint", true, ""},
+		{"int", "int", "int", "", "integer", true, ""},
+		{"bigint", "bigint", "bigint", "", "bigint", true, ""},
+
+		// Bit → boolean
+		{"bit", "bit", "bit", "", "boolean", true, "sql-server-bit-to-boolean"},
+
+		// Uniqueidentifier → uuid
+		{"uniqueidentifier", "uniqueidentifier", "uniqueidentifier", "", "uuid", true, "sql-server-uniqueidentifier-to-uuid"},
+
+		// Hierarchyid / geography → bytea
+		{"hierarchyid", "hierarchyid", "hierarchyid", "", "bytea", true, "byte-vector-to-bytea"},
+		{"geography", "geography", "geography", "", "bytea", true, "byte-vector-to-bytea"},
+
+		// Float types with float-to-string transform
+		{"float", "float", "float", "", "float", false, "float-to-string"},
+		{"real", "real", "real", "", "real", false, "float-to-string"},
+
+		// Decimal/numeric with float-to-string
+		{"numeric", "numeric", "numeric", "", "numeric", false, "float-to-string"},
+		{"decimal", "decimal", "decimal", "", "numeric", false, "float-to-string"},
+
+		// Money types
+		{"money", "money", "money", "", "numeric", true, "float-to-string"},
+		{"smallmoney", "smallmoney", "smallmoney", "", "numeric", true, "float-to-string"},
+
+		// Binary types → bytea
+		{"binary", "binary", "binary", "", "bytea", true, "byte-vector-to-bytea"},
+		{"varbinary", "varbinary", "varbinary", "", "bytea", true, "byte-vector-to-bytea"},
+		{"image", "image", "image", "", "bytea", true, "byte-vector-to-bytea"},
+
+		// Date/time types
+		{"smalldatetime", "smalldatetime", "smalldatetime", "", "timestamptz", true, ""},
+		{"datetime", "datetime", "datetime", "", "timestamptz", true, ""},
+		{"datetime2", "datetime2", "datetime2", "", "timestamptz", true, ""},
+		{"datetimeoffset", "datetimeoffset", "datetimeoffset", "", "timestamptz", true, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := engine.Apply(tt.typeName, tt.columnType, tt.extra)
+			if got.TargetType != tt.wantType {
+				t.Errorf("Apply().TargetType = %q, want %q", got.TargetType, tt.wantType)
+			}
+			if got.DropTypemod != tt.wantDrop {
+				t.Errorf("Apply().DropTypemod = %v, want %v", got.DropTypemod, tt.wantDrop)
+			}
+			if got.Transform != tt.wantXform {
+				t.Errorf("Apply().Transform = %q, want %q", got.Transform, tt.wantXform)
+			}
+		})
+	}
+}
+
+func TestGetMSSQLColumnType(t *testing.T) {
+	tests := []struct {
+		name            string
+		typeName        string
+		numericPrec     int64
+		numericScale    int64
+		charMaxLen      int64
+		datetimePrec    int64
+		want            string
+	}{
+		{"float with precision", "float", 53, 0, 0, 0, "float(53)"},
+		{"float no precision", "float", 0, 0, 0, 0, "float"},
+		{"decimal with scale", "decimal", 18, 6, 0, 0, "decimal(18,6)"},
+		{"decimal no scale", "decimal", 18, 0, 0, 0, "decimal(18)"},
+		{"varchar with length", "varchar", 0, 0, 255, 0, "varchar(255)"},
+		{"nchar with length", "nchar", 0, 0, 10, 0, "nchar(10)"},
+		{"varchar max", "varchar", 0, 0, -1, 0, "varchar"},
+		{"datetime with precision", "datetime", 0, 0, 0, 3, "datetime(3)"},
+		{"plain type", "int", 0, 0, 0, 0, "int"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GetMSSQLColumnType(tt.typeName, tt.numericPrec, tt.numericScale, tt.charMaxLen, tt.datetimePrec); got != tt.want {
+				t.Errorf("GetMSSQLColumnType() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }

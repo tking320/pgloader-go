@@ -10,6 +10,7 @@ const (
 	SourcePostgreSQL                   // PostgreSQL -> PostgreSQL
 	SourceCSV                          // CSV file -> PostgreSQL
 	SourceSQLite                       // SQLite -> PostgreSQL
+	SourceMSSQL                        // MSSQL -> PostgreSQL
 )
 
 // LoadCommand represents a single LOAD command parsed from a .load file.

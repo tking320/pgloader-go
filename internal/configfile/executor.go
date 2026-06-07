@@ -16,6 +16,7 @@ import (
 	"github.com/tking320/pgloader-go/internal/orchestrator"
 	"github.com/tking320/pgloader-go/internal/pipeline"
 	"github.com/tking320/pgloader-go/internal/source/csv"
+	"github.com/tking320/pgloader-go/internal/source/mssql"
 	"github.com/tking320/pgloader-go/internal/source/mysql"
 	"github.com/tking320/pgloader-go/internal/source/pgsql"
 	"github.com/tking320/pgloader-go/internal/source/sqlite"
@@ -134,6 +135,8 @@ func ExecuteCommand(ctx context.Context, cmd *LoadCommand, cli CLIOptions) error
 		err = execCSV(ctx, cfg, mon, pool, cmd, schema)
 	case SourceSQLite:
 		err = execSQLite(ctx, cfg, mon, pool, cmd, schema)
+	case SourceMSSQL:
+		err = execMSSQL(ctx, cfg, mon, pool, cmd, schema)
 	default:
 		return fmt.Errorf("unsupported load type: %v", cmd.LoadType)
 	}
@@ -195,7 +198,7 @@ func execMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 
 	// Original pgloader behavior: when no TARGET SCHEMA specified,
 	// use the MySQL database name as the PostgreSQL schema name.
-	if schema == "" {
+	if schema == "" || schema == "public" {
 		schema = dbName
 	}
 
@@ -266,7 +269,7 @@ func execSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 		return fmt.Errorf("sqlite filename required in URI: %s", cmd.SourceURI)
 	}
 
-	if schema == "" {
+	if schema == "" || schema == "public" {
 		schema = "public"
 	}
 
@@ -275,6 +278,61 @@ func execSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 
 	if err := src.Connect(ctx); err != nil {
 		return fmt.Errorf("sqlite connect: %w", err)
+	}
+	defer src.Close()
+
+	// Apply INCLUDING/EXCLUDING table name filters
+	src.SetTableFilters(cmd.IncludingOnly, cmd.Excluding)
+
+	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	return mig.Run(ctx)
+}
+
+// execMSSQL runs a MSSQL-to-PostgreSQL migration from a parsed command.
+func execMSSQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
+	pool *pgxpool.Pool, cmd *LoadCommand, schema string) error {
+
+	u, err := url.Parse(cmd.SourceURI)
+	if err != nil {
+		return fmt.Errorf("parse mssql URI: %w", err)
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := 1433
+	portStr := u.Port()
+	if portStr != "" {
+		port, err = strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid mssql port: %s", portStr)
+		}
+	}
+
+	if u.User == nil {
+		return fmt.Errorf("mssql URI must include a username")
+	}
+	user := u.User.Username()
+	password, _ := u.User.Password()
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		dbName = u.Query().Get("database")
+	}
+	if dbName == "" {
+		return fmt.Errorf("mssql database name required in URI path or ?database= parameter")
+	}
+
+	// Preserve MSSQL schema names (default to "dbo") matching original pgloader behavior.
+	if schema == "" || schema == "public" {
+		schema = "dbo"
+	}
+
+	castEngine := cast.NewEngine(cast.MSSQLDefaultRules())
+	src := mssql.New(host, port, user, password, dbName, schema, "", pool, castEngine)
+
+	if err := src.Connect(ctx); err != nil {
+		return fmt.Errorf("mssql connect: %w", err)
 	}
 	defer src.Close()
 

@@ -511,3 +511,39 @@ func TestParseWithNoCommentsOption(t *testing.T) {
 		t.Fatalf("expected 'no comments' in WITH options, got %v", cmd.WITH)
 	}
 }
+
+func TestParseSampleMSSQLFile(t *testing.T) {
+	data, err := os.ReadFile("../../test/mssql.load")
+	if err != nil {
+		t.Fatalf("read sample file: %v", err)
+	}
+	cf, err := ParseFile(string(data))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	cmd := cf.Commands[0]
+	if cmd.LoadType != SourceMSSQL {
+		t.Errorf("expected SourceMSSQL, got %v", cmd.LoadType)
+	}
+	if len(cmd.WITH) == 0 {
+		t.Error("expected WITH options")
+	}
+	if len(cmd.SET) == 0 {
+		t.Error("expected SET options")
+	}
+	if len(cmd.CastRules) == 0 {
+		t.Error("expected CAST rules")
+	}
+	if len(cmd.IncludingOnly) == 0 {
+		t.Error("expected INCLUDING patterns")
+	}
+	if len(cmd.Excluding) == 0 {
+		t.Error("expected EXCLUDING patterns")
+	}
+	if len(cmd.BeforeLoad) == 0 {
+		t.Error("expected BEFORE LOAD")
+	}
+	if len(cmd.AfterLoad) == 0 {
+		t.Error("expected AFTER LOAD")
+	}
+}

@@ -1,6 +1,6 @@
 # pgloader-go
 
-Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL data loading tool. Migrate data from SQLite, MySQL, PostgreSQL, and CSV files into PostgreSQL with automatic schema migration, parallel COPY pipelines, and per-row error handling.
+Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL data loading tool. Migrate data from SQLite, MySQL, PostgreSQL, MSSQL, and CSV files into PostgreSQL with automatic schema migration, parallel COPY pipelines, and per-row error handling.
 
 ## Architecture
 
@@ -50,7 +50,8 @@ Go port of [pgloader](https://pgloader.io) — a high-performance PostgreSQL dat
 | [`internal/source/sqlite`](internal/source/sqlite) | SQLite schema introspection + data reader |
 | [`internal/source/mysql`](internal/source/mysql) | MySQL schema introspection + data reader |
 | [`internal/source/pgsql`](internal/source/pgsql) | PostgreSQL schema introspection + COPY-based reader |
-| [`internal/cast`](internal/cast) | CAST rule engine — MySQL/PG type mapping + transform functions |
+| [`internal/source/mssql`](internal/source/mssql) | MSSQL schema introspection + data reader |
+| [`internal/cast`](internal/cast) | CAST rule engine — MySQL/MSSQL/PG type mapping + transform functions |
 | [`internal/copy`](internal/copy) | COPY text format encoding, batch management, binary-search retry |
 | [`internal/pipeline`](internal/pipeline) | Goroutine pipeline: reader → batch → COPY writer |
 | [`internal/orchestrator`](internal/orchestrator) | Full migration lifecycle orchestration |
@@ -66,7 +67,7 @@ CSV file → MapRows(row by row) → FormatRowToCopyText → batch
   → error → RetryBatch (binary search bad rows) → retry good rows
 ```
 
-### Database migration (SQLite / MySQL / PostgreSQL)
+### Database migration (SQLite / MySQL / PostgreSQL / MSSQL)
 
 ```
 FetchMetadata (introspect source schema)
@@ -95,6 +96,9 @@ pgloader mysql://user@host/dbname postgresql://localhost/target
 
 # PostgreSQL to PostgreSQL
 pgloader postgresql://source-host/dbname postgresql://target-host/targetdb
+
+# MSSQL to PostgreSQL
+pgloader mssql://sa:password@host:1433/dbname postgresql://localhost/target
 
 # Schema-only migration
 pgloader mysql://user@host/dbname postgresql://localhost/target --with "schema only"
@@ -148,7 +152,7 @@ LOAD DATABASE
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--table` | — | Target table name (required for CSV) |
-| `--type` | auto | Source type: `csv`, `sqlite`, `mysql`, `postgresql`, `pg` |
+| `--type` | auto | Source type: `csv`, `sqlite`, `mysql`, `postgresql`, `pg`, `mssql`, `sqlserver` |
 | `--delimiter` | `,` | CSV delimiter character |
 | `--header` | `false` | CSV file has header row |
 | `--skip-lines` | `0` | Lines to skip at start of file |
@@ -251,6 +255,29 @@ LOAD DATABASE
 | `numeric` | `numeric` | — |
 | `datetime` | `timestamptz` | — |
 
+### MSSQL → PostgreSQL
+
+| MSSQL type | PostgreSQL type | Transform |
+|------------|----------------|-----------|
+| `char` / `nchar` / `varchar` / `nvarchar` / `ntext` | `text` | — |
+| `xml` | `xml` | — |
+| `int identity` | `bigserial` | — |
+| `bigint identity` | `bigserial` | — |
+| `smallint identity` | `smallserial` | — |
+| `tinyint identity` | `serial` | — |
+| `int` | `integer` | — |
+| `tinyint` | `smallint` | — |
+| `bigint` | `bigint` | — |
+| `bit` | `boolean` | `sql-server-bit-to-boolean` |
+| `uniqueidentifier` | `uuid` | `sql-server-uniqueidentifier-to-uuid` |
+| `hierarchyid` / `geography` | `bytea` | `byte-vector-to-bytea` |
+| `float` | `float` | `float-to-string` |
+| `real` | `real` | `float-to-string` |
+| `numeric` / `decimal` | `numeric` | `float-to-string` |
+| `money` / `smallmoney` | `numeric` | `float-to-string` |
+| `binary` / `varbinary` / `image` | `bytea` | `byte-vector-to-bytea` |
+| `smalldatetime` / `datetime` / `datetime2` / `datetimeoffset` | `timestamptz` | — |
+
 ## Build
 
 ```bash
@@ -266,6 +293,7 @@ make build
 - PostgreSQL target
 - SQLite source (requires CGO, `mattn/go-sqlite3`)
 - MySQL source (optional, for MySQL migrations)
+- MSSQL source (optional, for MSSQL migrations; uses `denisenkom/go-mssqldb`)
 
 ## Testing
 
@@ -354,7 +382,7 @@ docker rm -f pgloader-pg-src pgloader-pg-tgt pgloader-mysql-src
 - [x] Batch error retry (binary search)
 - [x] Summary report matching native pgloader format
 - [x] SQLite source
-- [ ] MSSQL source
+- [x] MSSQL source
 - [ ] Fixed-width / DBF / IXF sources
 - [x] `.load` command file parser
 - [ ] Citus distribution support

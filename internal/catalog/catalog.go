@@ -293,7 +293,7 @@ func (i *Index) DropIndexSQL() string {
 func (fk *ForeignKey) CreateFKeySQL() string {
 	return fmt.Sprintf(
 		"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s%s;",
-		QuoteIdent(fk.TableName),
+		quoteQualifiedIdent(fk.TableName),
 		QuoteIdent(fk.Name),
 		strings.Join(QuoteIdents(fk.Columns), ", "),
 		quoteQualifiedIdent(fk.ForeignTable),

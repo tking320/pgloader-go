@@ -32,6 +32,7 @@ import (
 	"github.com/tking320/pgloader-go/internal/orchestrator"
 	"github.com/tking320/pgloader-go/internal/pipeline"
 	"github.com/tking320/pgloader-go/internal/source/csv"
+	"github.com/tking320/pgloader-go/internal/source/mssql"
 	"github.com/tking320/pgloader-go/internal/source/mysql"
 	"github.com/tking320/pgloader-go/internal/source/pgsql"
 	"github.com/tking320/pgloader-go/internal/source/sqlite"
@@ -252,15 +253,18 @@ func execute(ctx context.Context) error {
 			case sourceType == "mysql" ||
 				(sourceType == "" && strings.HasPrefix(sourceArg, "mysql://")):
 				loadErr = runMySQL(ctx, cfg, mon, pool, sourceArg, schema, table, guess)
-			case sourceType == "" || sourceType == "csv":
+			case sourceType == "sqlite" ||
+				(sourceType == "" && strings.HasPrefix(sourceArg, "sqlite://")):
+				loadErr = runSQLite(ctx, cfg, mon, pool, sourceArg, schema, table)
+			case sourceType == "mssql" || sourceType == "sqlserver" ||
+				(sourceType == "" && (strings.HasPrefix(sourceArg, "mssql://") || strings.HasPrefix(sourceArg, "sqlserver://"))):
+				loadErr = runMSSQL(ctx, cfg, mon, pool, sourceArg, schema, table)
+			case sourceType == "csv" || (sourceType == "" && !isURISource(sourceArg)):
 				// File source (CSV)
 				if table == "" {
 					return fmt.Errorf("target table required: use --table")
 				}
 				loadErr = runCSV(ctx, cfg, mon, pool, sourceArg, schema, table, delimiter, hasHeader, skipLines, guess, enc, colsFlag)
-			case sourceType == "sqlite" ||
-				(sourceType == "" && strings.HasPrefix(sourceArg, "sqlite://")):
-				loadErr = runSQLite(ctx, cfg, mon, pool, sourceArg, schema, table)
 			default:
 				return fmt.Errorf("unsupported source type: %s", sourceType)
 			}
@@ -315,7 +319,7 @@ Examples:
 	rootCmd.Flags().String("before", "", "SQL file to run before load")
 	rootCmd.Flags().String("after", "", "SQL file to run after load")
 	rootCmd.Flags().String("cast", "", "cast rules file")
-	rootCmd.Flags().String("type", "", "source type (csv, mysql, postgresql, pg, sqlite)")
+	rootCmd.Flags().String("type", "", "source type (csv, mysql, postgresql, pg, sqlite, mssql, sqlserver)")
 	rootCmd.Flags().Bool("foreign-keys", true, "create foreign keys after data load")
 	rootCmd.Flags().MarkHidden("foreign-keys")
 	rootCmd.Flags().Bool("include-drop", false, "DROP TABLE IF EXISTS before CREATE TABLE")
@@ -468,6 +472,58 @@ func runPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 }
 
 // ---------------------------------------------------------------------------
+// MSSQL source runner
+// ---------------------------------------------------------------------------
+
+func runMSSQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
+	pool *pgxpool.Pool, sourceArg, schema, table string) error {
+
+	u, err := url.Parse(sourceArg)
+	if err != nil {
+		return fmt.Errorf("parse mssql URI: %w", err)
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	portStr := u.Port()
+	port := 1433
+	if portStr != "" {
+		port, err = strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid mssql port: %s", portStr)
+		}
+	}
+
+	user := u.User.Username()
+	password, _ := u.User.Password()
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		dbName = u.Query().Get("database")
+	}
+	if dbName == "" {
+		return fmt.Errorf("mssql database name required in URI path or ?database= parameter")
+	}
+
+	// Preserve MSSQL schema names (default to "dbo") matching original pgloader behavior.
+	if schema == "" || schema == "public" {
+		schema = "dbo"
+	}
+
+	castEngine := cast.NewEngine(cast.MSSQLDefaultRules())
+	src := mssql.New(host, port, user, password, dbName, schema, table, pool, castEngine)
+
+	if err := src.Connect(ctx); err != nil {
+		return fmt.Errorf("mssql connect: %w", err)
+	}
+	defer src.Close()
+
+	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	return mig.Run(ctx)
+}
+
+// ---------------------------------------------------------------------------
 // SQLite source runner
 // ---------------------------------------------------------------------------
 
@@ -479,7 +535,7 @@ func runSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 		return fmt.Errorf("sqlite filename required in URI: %s", sourceArg)
 	}
 
-	if schema == "" {
+	if schema == "" || schema == "public" {
 		schema = "public"
 	}
 
