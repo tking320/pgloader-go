@@ -2,7 +2,7 @@ APP_NAME   = pgloader
 BUILDDIR   = build
 GO         = go
 
-.PHONY: all build test test-short lint fmt clean check check-pg-pg check-mysql-pg check-sqlite-pg check-mssql-pg check-integration
+.PHONY: all build test test-short lint fmt clean check check-pg-pg check-mysql-pg check-sqlite-pg check-mssql-pg check-mssql-pg-cli check-mssql-pg-load check-integration _run-mssql-migration
 
 all: build
 
@@ -32,9 +32,10 @@ PG_SRC  ?= postgresql://test:test@localhost:5434/sourcedb
 PG_TGT  ?= postgresql://test:test@localhost:5433/targetdb
 MYSQL_URI ?= mysql://root:test@127.0.0.1:3306/sourcedb
 MSSQL_SA_PASSWORD ?= YourStr0ngP@ssword
-MSSQL_URI ?= sqlserver://sa:$(MSSQL_SA_PASSWORD)@localhost:1433?database=sourcedb
+# URL-encoded password (%40 = @) for use with Go's url.Parse in pgloader
+MSSQL_URI ?= sqlserver://sa:YourStr0ngP%40ssword@localhost:1433?database=sourcedb
 
-check-integration: check-pg-pg check-mysql-pg check-sqlite-pg check-mssql-pg
+check-integration: check-pg-pg check-mysql-pg check-sqlite-pg check-mssql-pg check-mssql-pg-load
 
 check-pg-pg: build
 	@echo "=== PG -> PG integration test ==="
@@ -106,10 +107,17 @@ check-sqlite-pg: build
 # MSSQL -> PG integration test
 # ---------------------------------------------------------------------------
 
-check-mssql-pg: build
-	@echo "=== MSSQL -> PG integration test ==="
-	@echo "  Cleaning target database..."
+check-mssql-pg check-mssql-pg-cli: build
+	@echo "=== MSSQL -> PG integration test (CLI) ==="
 	@psql "$(PG_TGT)" -c "DROP SCHEMA IF EXISTS dbo CASCADE; CREATE SCHEMA dbo;" -q >/dev/null 2>&1 || true
+	$(MAKE) _run-mssql-migration MIGRATION_CMD="./build/bin/pgloader \"$(MSSQL_URI)\" \"$(PG_TGT)\" --with \"foreign keys\""
+
+check-mssql-pg-load: build
+	@echo "=== MSSQL -> PG integration test (.load file) ==="
+	@psql "$(PG_TGT)" -c "DROP SCHEMA IF EXISTS dbo CASCADE; CREATE SCHEMA dbo;" -q >/dev/null 2>&1 || true
+	$(MAKE) _run-mssql-migration MIGRATION_CMD="./build/bin/pgloader test/mssql.load"
+
+_run-mssql-migration:
 	@ok=1; input_path="test/mssql_migration_test_data.sql"; \
 	if command -v sqlcmd >/dev/null 2>&1; then \
 	  sqlcmd() { sqlcmd "$$@"; }; \
@@ -124,7 +132,7 @@ check-mssql-pg: build
 	command -v psql >/dev/null 2>&1 || { echo "  SKIP: psql not installed"; ok=0; }; \
 	if [ "$$ok" -eq 1 ]; then \
 	  echo "  Creating sourcedb database..."; \
-	  sqlcmd -S localhost,1433 -U sa -P "$(MSSQL_SA_PASSWORD)" -Q "IF NOT EXISTS (SELECT * FROM sys.databases WHERE name='sourcedb') CREATE DATABASE sourcedb" 2>/dev/null || { echo "  SKIP: cannot create sourcedb"; ok=0; }; \
+	  sqlcmd -S localhost,1433 -U sa -P "$(MSSQL_SA_PASSWORD)" -Q "DROP DATABASE IF EXISTS sourcedb; CREATE DATABASE sourcedb" 2>/dev/null || { echo "  SKIP: cannot create sourcedb"; ok=0; }; \
 	fi; \
 	if [ "$$ok" -eq 1 ]; then \
 	  echo "  Loading test data into source..."; \
@@ -132,7 +140,7 @@ check-mssql-pg: build
 	fi; \
 	if [ "$$ok" -eq 1 ]; then \
 	  echo "  Running migration..."; \
-	  ./build/bin/pgloader "$(MSSQL_URI)" "$(PG_TGT)" --with "foreign keys"; \
+	  $(MIGRATION_CMD); \
 	  echo "  Verifying migration..."; \
 	  psql "$(PG_TGT)" -f test/mssql_migration_verify.sql -t -A; \
 	else \

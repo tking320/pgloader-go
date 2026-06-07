@@ -53,16 +53,11 @@ LOAD DATABASE
           type varbinary to bytea drop typemod using byte-vector-to-bytea,
           type image to bytea drop typemod using byte-vector-to-bytea
 
-     INCLUDING ONLY TABLE NAMES MATCHING ~/^dbo\./, 'app.%'
-
      EXCLUDING TABLE NAMES MATCHING ~/_bak$/, ~/^tmp_/, 'audit_log_%'
 
      BEFORE LOAD DO
      $$ create schema if not exists dbo; $$,
-     $$ create extension if not exists postgis; $$,
      $$ alter database targetdb set search_path to dbo, public; $$
 
      AFTER LOAD DO
-     $$ analyze; $$,
-     $$ create index concurrently if not exists idx_users_email on dbo.users (email); $$,
-     $$ create index concurrently if not exists idx_orders_created on dbo.orders (created_at); $$;
+     $$ analyze; $$;

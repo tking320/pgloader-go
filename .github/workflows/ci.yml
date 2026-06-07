@@ -153,3 +153,129 @@ jobs:
       run: ./pgloader mysql://root:test@127.0.0.1:3306/sourcedb postgresql://test:test@127.0.0.1:5432/targetdb --with "foreign keys"
     - name: Verify migration results
       run: psql postgresql://test:test@127.0.0.1:5432/targetdb -f test/mysql_migration_verify.sql -t -A
+
+  # ---------------------------------------------------------------------------
+  # MSSQL -> PostgreSQL migration (command-line mode)
+  # ---------------------------------------------------------------------------
+  mssql-to-pg-migration-cli:
+    runs-on: ubuntu-latest
+    services:
+      mssql-source:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStr0ngP@ssword
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "CMD-SHELL /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P 'YourStr0ngP@ssword' -Q 'SELECT 1'"
+          --health-interval 15s
+          --health-timeout 5s
+          --health-retries 20
+          --start-period 30s
+      pg-target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: targetdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20'
+    - name: Install PostgreSQL client
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+    - name: Create MSSQL source database and load test data
+      env:
+        MSSQL_SA_PASSWORD: YourStr0ngP@ssword
+      run: |
+        CID=$(docker ps -q --filter "label=com.github.actions.service=mssql-source")
+        if [ -z "$CID" ]; then echo "Could not find MSSQL container" >&2; exit 1; fi
+        docker exec "$CID" /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+          -Q "IF NOT EXISTS (SELECT * FROM sys.databases WHERE name='sourcedb') CREATE DATABASE sourcedb"
+        docker cp test/mssql_migration_test_data.sql "$CID":/tmp/test_data.sql
+        docker exec "$CID" /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+          -d sourcedb -i /tmp/test_data.sql
+    - name: Build pgloader
+      run: go build -o pgloader ./cmd/pgloader
+    - name: Migrate MSSQL to PostgreSQL (CLI)
+      # %40 is URL-encoded @ for the SA password in the connection URI
+      run: ./pgloader "sqlserver://sa:YourStr0ngP%40ssword@localhost:1433?database=sourcedb" \
+        "postgresql://test:test@localhost:5432/targetdb" \
+        --with "foreign keys"
+    - name: Verify migration results
+      run: psql "postgresql://test:test@localhost:5432/targetdb" -f test/mssql_migration_verify.sql -t -A
+
+  # ---------------------------------------------------------------------------
+  # MSSQL -> PostgreSQL migration (.load config file mode)
+  # ---------------------------------------------------------------------------
+  mssql-to-pg-migration-load:
+    runs-on: ubuntu-latest
+    services:
+      mssql-source:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStr0ngP@ssword
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "CMD-SHELL /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P 'YourStr0ngP@ssword' -Q 'SELECT 1'"
+          --health-interval 15s
+          --health-timeout 5s
+          --health-retries 20
+          --start-period 30s
+      pg-target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: targetdb
+        ports:
+          # Map to 5433 to match target in test/mssql.load
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20'
+    - name: Install PostgreSQL client
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+    - name: Create MSSQL source database and load test data
+      env:
+        MSSQL_SA_PASSWORD: YourStr0ngP@ssword
+      run: |
+        CID=$(docker ps -q --filter "label=com.github.actions.service=mssql-source")
+        if [ -z "$CID" ]; then echo "Could not find MSSQL container" >&2; exit 1; fi
+        docker exec "$CID" /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+          -Q "IF NOT EXISTS (SELECT * FROM sys.databases WHERE name='sourcedb') CREATE DATABASE sourcedb"
+        docker cp test/mssql_migration_test_data.sql "$CID":/tmp/test_data.sql
+        docker exec "$CID" /opt/mssql-tools/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+          -d sourcedb -i /tmp/test_data.sql
+    - name: Build pgloader
+      run: go build -o pgloader ./cmd/pgloader
+    - name: Patch .load file with CI credentials
+      run: |
+        # Replace default placeholder password with CI password (URL-encoded @ as %40)
+        sed -i 's/:password@/:YourStr0ngP%40ssword@/' test/mssql.load
+        echo "Patched test/mssql.load:"
+        head -3 test/mssql.load
+    - name: Migrate MSSQL to PostgreSQL (.load file)
+      run: ./pgloader test/mssql.load
+    - name: Verify migration results
+      run: psql "postgresql://test:test@localhost:5433/targetdb" -f test/mssql_migration_verify.sql -t -A
