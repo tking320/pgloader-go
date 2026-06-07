@@ -406,7 +406,7 @@ func runMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	}
 	defer src.Close()
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -467,7 +467,7 @@ func runPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	}
 	defer src.Close()
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -519,7 +519,7 @@ func runMSSQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	}
 	defer src.Close()
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -547,6 +547,6 @@ func runSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	}
 	defer src.Close()
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }

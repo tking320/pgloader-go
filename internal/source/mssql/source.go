@@ -17,6 +17,12 @@ import (
 	"github.com/tking320/pgloader-go/internal/source"
 )
 
+// schemaTable holds a (schema, table) pair from MSSQL's INFORMATION_SCHEMA.
+type schemaTable struct {
+	Schema string
+	Table  string
+}
+
 // MSSQLSource implements source.Source and source.DbSource for MSSQL databases.
 type MSSQLSource struct {
 	// MSSQL connection
@@ -43,11 +49,15 @@ type MSSQLSource struct {
 
 	// Concurrency sharding
 	whereClause string // WHERE clause for sharded reads
-	activeTable int    // index into schema_.Tables for MapRows
+	activeTable int    // index into catalog for MapRows
 
 	// Table name filtering (INCLUDING/EXCLUDING)
 	includingOnly []string
 	excluding     []string
+
+	// Materialized views support
+	materializeViews []string
+	tempViewTables   []schemaTable
 }
 
 // New creates an MSSQLSource.
@@ -99,39 +109,82 @@ func (s *MSSQLSource) SetTableFilters(including, excluding []string) {
 	s.excluding = excluding
 }
 
+// SetMaterializeViews configures which views to materialize as temp tables.
+func (s *MSSQLSource) SetMaterializeViews(views []string) {
+	s.materializeViews = views
+}
+
 // ---------------------------------------------------------------------------
 // Source interface
 // ---------------------------------------------------------------------------
 
 func (s *MSSQLSource) TableName() string { return s.table }
 
+func (s *MSSQLSource) SchemaName() string {
+	if s.catalog == nil || s.activeTable >= len(s.catalog.Schemas) {
+		return s.schema
+	}
+	// Find the active table's schema
+	t := s.ActiveTable()
+	if t != nil && t.Schema != nil {
+		return t.Schema.Name
+	}
+	return s.schema
+}
+
 func (s *MSSQLSource) SetActiveTable(name string) error {
-	if s.schema_ == nil {
+	if s.catalog == nil {
 		return fmt.Errorf("no catalog: call FetchMetadata first")
 	}
-	for i, t := range s.schema_.Tables {
-		if t.Name == name {
-			s.activeTable = i
-			return nil
+	// Support both "schema.table" and bare "table" names
+	schemaName, tableName := name, name
+	if parts := strings.SplitN(name, ".", 2); len(parts) == 2 {
+		schemaName, tableName = parts[0], parts[1]
+	}
+	for _, sch := range s.catalog.Schemas {
+		if sch.Name != schemaName && schemaName == name {
+			continue // when no dot, skip schema filtering
+		}
+		for i, t := range sch.Tables {
+			if t.Name == tableName {
+				s.activeTable = i
+				s.schema_ = sch
+				s.table = tableName
+				return nil
+			}
+		}
+		// If we filtered by schema and didn't find, try other schemas
+		if schemaName != name {
+			break
 		}
 	}
 	return fmt.Errorf("table %q not found in catalog", name)
 }
 
 func (s *MSSQLSource) ActiveTable() *catalog.Table {
-	if s.schema_ == nil || len(s.schema_.Tables) <= s.activeTable {
+	if s.catalog == nil || len(s.catalog.Schemas) == 0 {
 		return nil
 	}
-	return s.schema_.Tables[s.activeTable]
+	// Find table by scanning all schemas
+	idx := s.activeTable
+	for _, sch := range s.catalog.Schemas {
+		if idx < len(sch.Tables) {
+			return sch.Tables[idx]
+		}
+		idx -= len(sch.Tables)
+	}
+	return nil
 }
 
 func (s *MSSQLSource) TableNames() []string {
-	if s.schema_ == nil {
+	if s.catalog == nil {
 		return nil
 	}
-	names := make([]string, len(s.schema_.Tables))
-	for i, t := range s.schema_.Tables {
-		names[i] = t.Name
+	var names []string
+	for _, sch := range s.catalog.Schemas {
+		for _, t := range sch.Tables {
+			names = append(names, sch.Name+"."+t.Name)
+		}
 	}
 	return names
 }
@@ -148,10 +201,10 @@ func (s *MSSQLSource) Clone() source.Source {
 
 // CopyColumnList returns the column list for COPY command.
 func (s *MSSQLSource) CopyColumnList() []string {
-	if s.schema_ == nil || len(s.schema_.Tables) == 0 {
+	t := s.ActiveTable()
+	if t == nil {
 		return nil
 	}
-	t := s.ActiveTable()
 	cols := make([]string, len(t.Columns))
 	for i, c := range t.Columns {
 		cols[i] = c.Name
@@ -162,11 +215,14 @@ func (s *MSSQLSource) CopyColumnList() []string {
 // ConcurrencySupport returns sharded sources for parallel loading.
 // Uses primary key range sharding (same pattern as MySQL).
 func (s *MSSQLSource) ConcurrencySupport(ctx context.Context, concurrency int) ([]source.Source, error) {
-	if concurrency <= 1 || s.schema_ == nil || len(s.schema_.Tables) == 0 {
+	if concurrency <= 1 || s.catalog == nil {
 		return nil, nil
 	}
 
 	t := s.ActiveTable()
+	if t == nil || t.Schema == nil {
+		return nil, nil
+	}
 
 	// Find integer primary key
 	var pkName string
@@ -181,7 +237,8 @@ func (s *MSSQLSource) ConcurrencySupport(ctx context.Context, concurrency int) (
 	}
 
 	// Get min/max
-	query := fmt.Sprintf("SELECT MIN(%s), MAX(%s) FROM [%s]", quoteIdent(pkName), quoteIdent(pkName), t.Name)
+	schemaName := t.Schema.Name
+	query := fmt.Sprintf("SELECT MIN(%s), MAX(%s) FROM %s.%s", quoteIdent(pkName), quoteIdent(pkName), quoteIdent(schemaName), quoteIdent(t.Name))
 	var min, max sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, query).Scan(&min, &max); err != nil {
 		return nil, fmt.Errorf("get pk range: %w", err)
@@ -202,9 +259,9 @@ func (s *MSSQLSource) ConcurrencySupport(ctx context.Context, concurrency int) (
 		if i == concurrency-1 {
 			hi = max.Int64 + 1
 		}
-		clone := s.Clone().(*MSSQLSource)
-		clone.whereClause = fmt.Sprintf("%s >= %d AND %s < %d", quoteIdent(pkName), lo, quoteIdent(pkName), hi)
-		if err := clone.Connect(ctx); err != nil {
+		clone := s.Clone()
+		clone.(*MSSQLSource).whereClause = fmt.Sprintf("%s >= %d AND %s < %d", quoteIdent(pkName), lo, quoteIdent(pkName), hi)
+		if err := clone.(*MSSQLSource).Connect(ctx); err != nil {
 			return nil, fmt.Errorf("clone connect: %w", err)
 		}
 		sources = append(sources, clone)
@@ -215,20 +272,23 @@ func (s *MSSQLSource) ConcurrencySupport(ctx context.Context, concurrency int) (
 
 // MapRows reads all rows from the MSSQL table and calls processRow for each.
 func (s *MSSQLSource) MapRows(ctx context.Context, processRow func(source.Row) error) error {
-	if s.schema_ == nil || len(s.schema_.Tables) == 0 {
+	if s.catalog == nil {
 		return fmt.Errorf("no table metadata: call FetchMetadata first")
 	}
 
 	t := s.ActiveTable()
+	if t == nil || t.Schema == nil {
+		return fmt.Errorf("no active table")
+	}
 
 	// Build SELECT with proper SQL expressions per column type
-	// (mirroring get-column-sql-expression from the reference)
 	colExprs := make([]string, len(t.Columns))
 	for i, col := range t.Columns {
 		colExprs[i] = getColumnSQLExpression(col.Name, col.SourceType)
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM [%s]", strings.Join(colExprs, ", "), t.Name)
+	schemaName := t.Schema.Name
+	query := fmt.Sprintf("SELECT %s FROM %s.%s", strings.Join(colExprs, ", "), quoteIdent(schemaName), quoteIdent(t.Name))
 	if s.whereClause != "" {
 		query += " WHERE " + s.whereClause
 	}
@@ -284,8 +344,6 @@ func (s *MSSQLSource) MapRows(ctx context.Context, processRow func(source.Row) e
 }
 
 // getColumnSQLExpression returns the SQL expression for reading a column.
-// Mirrors get-column-sql-expression from the reference implementation:
-// date/time types use CONVERT with specific style codes for unambiguous format.
 func getColumnSQLExpression(name, typeName string) string {
 	quoted := quoteIdent(name)
 	switch strings.ToLower(typeName) {
@@ -295,14 +353,14 @@ func getColumnSQLExpression(name, typeName string) string {
 		return fmt.Sprintf("convert(varchar(30), %s, 126)", quoted)
 	case "datetimeoffset":
 		return fmt.Sprintf("convert(varchar(35), %s, 127)", quoted)
-		case "smalldatetime", "date":
-			return fmt.Sprintf("convert(varchar(30), %s, 126)", quoted)
-		case "uniqueidentifier":
-			return fmt.Sprintf("convert(varchar(36), %s)", quoted)
-		default:
-			return quoted
-		}
+	case "smalldatetime", "date":
+		return fmt.Sprintf("convert(varchar(30), %s, 126)", quoted)
+	case "uniqueidentifier":
+		return fmt.Sprintf("convert(varchar(36), %s)", quoted)
+	default:
+		return quoted
 	}
+}
 
 // convertMSSQLValue converts a database/sql driver value to a standard Go value.
 func convertMSSQLValue(v interface{}) interface{} {
@@ -335,9 +393,86 @@ func quoteIdent(name string) string {
 	if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
 		return name
 	}
-	// Escape any embedded brackets
 	name = strings.ReplaceAll(name, "]", "]]")
 	return "[" + name + "]"
+}
+
+// ---------------------------------------------------------------------------
+// Materialized views
+// ---------------------------------------------------------------------------
+
+// createMaterializedViews creates temp tables for views that should be
+// materialized as regular tables during migration.
+// For "*" (all views), discovers all views via INFORMATION_SCHEMA.
+// For named views, creates temp tables under the specified schema.
+func (s *MSSQLSource) createMaterializedViews(ctx context.Context) error {
+	if len(s.materializeViews) == 0 {
+		return nil
+	}
+
+	type schemaView struct {
+		Schema string
+		Name   string
+	}
+	var views []schemaView
+
+	if len(s.materializeViews) == 1 && s.materializeViews[0] == "*" {
+		// ALL VIEWS mode — discover from INFORMATION_SCHEMA.TABLES
+		query := `SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'VIEW' AND TABLE_CATALOG = @p1`
+		rows, err := s.db.QueryContext(ctx, query, sql.Named("p1", s.dbName))
+		if err != nil {
+			return fmt.Errorf("discover views: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var schema, name string
+			if err := rows.Scan(&schema, &name); err != nil {
+				return err
+			}
+			views = append(views, schemaView{Schema: schema, Name: name})
+		}
+	} else {
+		// Named views
+		for _, raw := range s.materializeViews {
+			name := strings.Trim(raw, "' ")
+			if name == "" {
+				continue
+			}
+			// Check if view name includes a schema
+			sch := s.schema
+			if parts := strings.SplitN(name, ".", 2); len(parts) == 2 {
+				sch, name = parts[0], parts[1]
+			}
+			views = append(views, schemaView{Schema: sch, Name: name})
+		}
+	}
+
+	if len(views) == 0 {
+		return nil
+	}
+
+	for _, v := range views {
+		tableName := v.Name + "_pgloader"
+		sql := fmt.Sprintf("SELECT * INTO %s.%s FROM %s.%s", quoteIdent(v.Schema), quoteIdent(tableName), quoteIdent(v.Schema), quoteIdent(v.Name))
+		if _, err := s.db.ExecContext(ctx, sql); err != nil {
+			return fmt.Errorf("materialize view %s.%s: %w", v.Schema, v.Name, err)
+		}
+		s.tempViewTables = append(s.tempViewTables, schemaTable{Schema: v.Schema, Table: tableName})
+	}
+
+	return nil
+}
+
+// DropMaterializedViews drops temp tables created by createMaterializedViews.
+func (s *MSSQLSource) DropMaterializedViews(ctx context.Context) error {
+	for _, st := range s.tempViewTables {
+		sql := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", quoteIdent(st.Schema), quoteIdent(st.Table))
+		if _, err := s.db.ExecContext(ctx, sql); err != nil {
+			return fmt.Errorf("drop temp table %s.%s: %w", st.Schema, st.Table, err)
+		}
+	}
+	s.tempViewTables = nil
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -350,35 +485,72 @@ func (s *MSSQLSource) FetchMetadata(ctx context.Context) error {
 		return fmt.Errorf("not connected: call Connect first")
 	}
 
-	// Default to "dbo" (MSSQL's default schema) when not overridden,
-	// matching the original pgloader behavior of preserving MSSQL schema names.
+	// Default to "dbo" (MSSQL's default schema) when not overridden
 	if s.schema == "" {
 		s.schema = "dbo"
 	}
 
+	// Create materialized view temp tables before catalog discovery
+	if err := s.createMaterializedViews(ctx); err != nil {
+		return fmt.Errorf("materialize views: %w", err)
+	}
+
 	s.catalog = &catalog.Catalog{}
-	s.schema_ = &catalog.Schema{Name: s.schema, Catalog: s.catalog}
-	s.catalog.Schemas = append(s.catalog.Schemas, s.schema_)
 
 	if s.table != "" {
 		// Single table mode
-		table, err := s.fetchTableMetadata(ctx, s.table)
+		s.schema_ = &catalog.Schema{Name: s.schema, Catalog: s.catalog}
+		s.catalog.Schemas = append(s.catalog.Schemas, s.schema_)
+
+		table, err := s.fetchTableMetadata(ctx, s.schema, s.table)
 		if err != nil {
 			return err
 		}
 		s.schema_.Tables = append(s.schema_.Tables, table)
 	} else {
-		// Full database mode — discover all tables
+		// Full database mode — discover all tables across schemas
 		tables, err := s.discoverTables(ctx)
 		if err != nil {
 			return err
 		}
-		for _, tbl := range tables {
-			table, err := s.fetchTableMetadata(ctx, tbl)
-			if err != nil {
-				return fmt.Errorf("fetch table %s: %w", tbl, err)
+
+		schemaMap := make(map[string]*catalog.Schema)
+		for _, st := range tables {
+			sch, ok := schemaMap[st.Schema]
+			if !ok {
+				sch = &catalog.Schema{Name: st.Schema, Catalog: s.catalog}
+				s.catalog.Schemas = append(s.catalog.Schemas, sch)
+				schemaMap[st.Schema] = sch
 			}
-			s.schema_.Tables = append(s.schema_.Tables, table)
+			table, err := s.fetchTableMetadata(ctx, st.Schema, st.Table)
+			if err != nil {
+				return fmt.Errorf("fetch table %s.%s: %w", st.Schema, st.Table, err)
+			}
+			sch.Tables = append(sch.Tables, table)
+		}
+
+		// Set s.schema_ to the first discovered schema (backward compat)
+		if len(s.catalog.Schemas) > 0 {
+			s.schema_ = s.catalog.Schemas[0]
+		}
+	}
+
+	// Rename materialized view temp tables to original view names
+	for _, st := range s.tempViewTables {
+		origName := strings.TrimSuffix(st.Table, "_pgloader")
+		if origName == st.Table {
+			continue
+		}
+		for _, sch := range s.catalog.Schemas {
+			if sch.Name != st.Schema {
+				continue
+			}
+			for _, tbl := range sch.Tables {
+				if tbl.Name == st.Table {
+					tbl.Name = origName
+					break
+				}
+			}
 		}
 	}
 
@@ -390,7 +562,7 @@ func (s *MSSQLSource) PrepareTarget(ctx context.Context, opts source.PrepareOpti
 	if s.pool == nil {
 		return fmt.Errorf("no target pool configured")
 	}
-	if s.schema_ == nil {
+	if s.catalog == nil {
 		return nil
 	}
 
@@ -400,30 +572,34 @@ func (s *MSSQLSource) PrepareTarget(ctx context.Context, opts source.PrepareOpti
 	}
 	defer conn.Release()
 
-	// Create target schema if needed and not public
-	if opts.CreateSchemas && s.schema != "" && !strings.EqualFold(s.schema, "public") {
-		if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", catalog.QuoteIdent(s.schema))); err != nil {
-			return fmt.Errorf("create schema %s: %w", s.schema, err)
-		}
-	}
+	for _, sch := range s.catalog.Schemas {
+		schemaName := sch.Name
 
-	for _, t := range s.schema_.Tables {
-		if opts.IncludeDrop {
-			if _, err := conn.Exec(ctx, t.DropTableSQL()); err != nil {
-				return fmt.Errorf("drop table %s: %w", t.Name, err)
+		// Create target schema if needed and not public
+		if opts.CreateSchemas && schemaName != "" && !strings.EqualFold(schemaName, "public") {
+			if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", catalog.QuoteIdent(schemaName))); err != nil {
+				return fmt.Errorf("create schema %s: %w", schemaName, err)
 			}
 		}
 
-		if opts.CreateTables {
-			sql := t.CreateTableSQL()
-			if _, err := conn.Exec(ctx, sql); err != nil {
-				return fmt.Errorf("create table %s: %w\nSQL: %s", t.Name, err, sql)
+		for _, t := range sch.Tables {
+			if opts.IncludeDrop {
+				if _, err := conn.Exec(ctx, t.DropTableSQL()); err != nil {
+					return fmt.Errorf("drop table %s: %w", t.Name, err)
+				}
 			}
-		}
 
-		if opts.Truncate {
-			if _, err := conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s", t.QualifiedName())); err != nil {
-				return fmt.Errorf("truncate %s: %w", t.Name, err)
+			if opts.CreateTables {
+				sql := t.CreateTableSQL()
+				if _, err := conn.Exec(ctx, sql); err != nil {
+					return fmt.Errorf("create table %s: %w\nSQL: %s", t.Name, err, sql)
+				}
+			}
+
+			if opts.Truncate {
+				if _, err := conn.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s", t.QualifiedName())); err != nil {
+					return fmt.Errorf("truncate %s: %w", t.Name, err)
+				}
 			}
 		}
 	}
@@ -433,7 +609,7 @@ func (s *MSSQLSource) PrepareTarget(ctx context.Context, opts source.PrepareOpti
 
 // CompleteTarget creates indexes, foreign keys, and resets sequences.
 func (s *MSSQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOptions) error {
-	if s.pool == nil || s.schema_ == nil {
+	if s.pool == nil || s.catalog == nil {
 		return nil
 	}
 
@@ -445,11 +621,13 @@ func (s *MSSQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 
 	// First pass: create all indexes
 	if opts.CreateIndexes {
-		for _, t := range s.schema_.Tables {
-			for _, idx := range t.Indexes {
-				sql := idx.CreateIndexSQL()
-				if _, err := conn.Exec(ctx, sql); err != nil {
-					return fmt.Errorf("create index %s: %w\nSQL: %s", idx.Name, err, sql)
+		for _, sch := range s.catalog.Schemas {
+			for _, t := range sch.Tables {
+				for _, idx := range t.Indexes {
+					sql := idx.CreateIndexSQL()
+					if _, err := conn.Exec(ctx, sql); err != nil {
+						return fmt.Errorf("create index %s: %w\nSQL: %s", idx.Name, err, sql)
+					}
 				}
 			}
 		}
@@ -457,11 +635,13 @@ func (s *MSSQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 
 	// Second pass: create all foreign keys
 	if opts.ForeignKeys {
-		for _, t := range s.schema_.Tables {
-			for _, fk := range t.ForeignKeys {
-				sql := fk.CreateFKeySQL()
-				if _, err := conn.Exec(ctx, sql); err != nil {
-					return fmt.Errorf("create fk %s: %w\nSQL: %s", fk.Name, err, sql)
+		for _, sch := range s.catalog.Schemas {
+			for _, t := range sch.Tables {
+				for _, fk := range t.ForeignKeys {
+					sql := fk.CreateFKeySQL()
+					if _, err := conn.Exec(ctx, sql); err != nil {
+						return fmt.Errorf("create fk %s: %w\nSQL: %s", fk.Name, err, sql)
+					}
 				}
 			}
 		}
@@ -469,25 +649,29 @@ func (s *MSSQLSource) CompleteTarget(ctx context.Context, opts source.CompleteOp
 
 	// Third pass: reset sequences
 	if opts.ResetSequences {
-		for _, t := range s.schema_.Tables {
-			if err := s.resetSequences(ctx, conn, t); err != nil {
-				return err
+		for _, sch := range s.catalog.Schemas {
+			for _, t := range sch.Tables {
+				if err := s.resetSequences(ctx, conn, t); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
 	// Fourth pass: comments
 	if opts.Comments {
-		for _, t := range s.schema_.Tables {
-			if sql := t.TableCommentSQL(); sql != "" {
-				if _, err := conn.Exec(ctx, sql); err != nil {
-					return fmt.Errorf("comment on table %s: %w\nSQL: %s", t.Name, err, sql)
-				}
-			}
-			for _, col := range t.Columns {
-				if sql := col.ColumnCommentSQL(t); sql != "" {
+		for _, sch := range s.catalog.Schemas {
+			for _, t := range sch.Tables {
+				if sql := t.TableCommentSQL(); sql != "" {
 					if _, err := conn.Exec(ctx, sql); err != nil {
-						return fmt.Errorf("comment on column %s.%s: %w\nSQL: %s", t.Name, col.Name, err, sql)
+						return fmt.Errorf("comment on table %s: %w\nSQL: %s", t.Name, err, sql)
+					}
+				}
+				for _, col := range t.Columns {
+					if sql := col.ColumnCommentSQL(t); sql != "" {
+						if _, err := conn.Exec(ctx, sql); err != nil {
+							return fmt.Errorf("comment on column %s.%s: %w\nSQL: %s", t.Name, col.Name, err, sql)
+						}
 					}
 				}
 			}

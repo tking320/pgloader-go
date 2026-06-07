@@ -93,6 +93,7 @@ func WithLazyQuotes(v bool) Option { return func(s *CSVSource) { s.LazyQuotes = 
 // ---------------------------------------------------------------------------
 
 func (s *CSVSource) TableName() string        { return s.TargetName }
+func (s *CSVSource) SchemaName() string       { return "" }
 func (s *CSVSource) Encoding() string         { return s.Enc }
 func (s *CSVSource) DataIsPreformatted() bool { return false }
 func (s *CSVSource) CopyColumnList() []string { return s.Columns }

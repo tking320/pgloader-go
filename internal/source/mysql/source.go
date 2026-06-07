@@ -103,7 +103,15 @@ func (s *MySQLSource) SetTableFilters(including, excluding []string) {
 // Source interface
 // ---------------------------------------------------------------------------
 
-func (s *MySQLSource) TableName() string { return s.table }
+func (s *MySQLSource) TableName() string {
+	if t := s.ActiveTable(); t != nil {
+		return t.Name
+	}
+	return s.table
+}
+
+func (s *MySQLSource) SchemaName() string { return s.schema }
+
 func (s *MySQLSource) SetActiveTable(name string) error {
 	if s.schema_ == nil {
 		return fmt.Errorf("no catalog: call FetchMetadata first")

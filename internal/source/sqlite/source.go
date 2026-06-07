@@ -98,7 +98,14 @@ func (s *SQLiteSource) SetTableFilters(including, excluding []string) {
 // Source interface
 // ---------------------------------------------------------------------------
 
-func (s *SQLiteSource) TableName() string { return s.table }
+func (s *SQLiteSource) TableName() string {
+	if t := s.ActiveTable(); t != nil {
+		return t.Name
+	}
+	return s.table
+}
+
+func (s *SQLiteSource) SchemaName() string { return s.schema }
 
 func (s *SQLiteSource) SetActiveTable(name string) error {
 	if s.schema_ == nil {

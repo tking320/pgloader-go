@@ -43,6 +43,11 @@ type Source interface {
 	// TableName returns the target table name.
 	TableName() string
 
+	// SchemaName returns the target schema for the active table.
+	// For single-schema sources this is the configured schema.
+	// For multi-schema sources (MSSQL), this returns the active table's schema.
+	SchemaName() string
+
 	// MapRows reads all rows from the source and calls processRow for each.
 	// This is the primary data reading method.
 	MapRows(ctx context.Context, processRow func(Row) error) error
@@ -76,6 +81,7 @@ type FileSource struct {
 }
 
 func (fs *FileSource) TableName() string        { return fs.TargetName }
+func (fs *FileSource) SchemaName() string       { return "" }
 func (fs *FileSource) Encoding() string         { return fs.Enc }
 func (fs *FileSource) DataIsPreformatted() bool { return false }
 

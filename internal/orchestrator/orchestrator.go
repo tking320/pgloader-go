@@ -23,18 +23,15 @@ type Migration struct {
 	pool *pgxpool.Pool
 	mon  *monitor.Monitor
 
-	// Target schema for all tables
-	targetSchema string
 }
 
 // NewMigration creates a new Migration orchestrator.
-func NewMigration(cfg *config.Config, src source.DbSource, pool *pgxpool.Pool, mon *monitor.Monitor, targetSchema string) *Migration {
+func NewMigration(cfg *config.Config, src source.DbSource, pool *pgxpool.Pool, mon *monitor.Monitor) *Migration {
 	return &Migration{
-		cfg:          cfg,
-		src:          src,
-		pool:         pool,
-		mon:          mon,
-		targetSchema: targetSchema,
+		cfg:  cfg,
+		src:  src,
+		pool: pool,
+		mon:  mon,
 	}
 }
 
@@ -129,12 +126,12 @@ func (m *Migration) copyAllTables(ctx context.Context) error {
 
 		if len(shards) > 0 {
 			// Parallel: run one pipeline per shard, each covering a PK range
-			if err := m.copyWithConcurrency(ctx, shards, tableName); err != nil {
+			if err := m.copyWithConcurrency(ctx, shards, m.src.TableName()); err != nil {
 				return fmt.Errorf("parallel copy %s: %w", tableName, err)
 			}
 		} else {
 			// Sequential: single pipeline for the whole table
-			pipe := pipeline.New(m.cfg, m.src, m.pool, m.mon, m.targetSchema, tableName)
+			pipe := pipeline.New(m.cfg, m.src, m.pool, m.mon, m.src.SchemaName(), m.src.TableName())
 			if err := pipe.Run(ctx); err != nil {
 				return fmt.Errorf("pipeline for %s: %w", tableName, err)
 			}
@@ -158,7 +155,7 @@ func (m *Migration) copyWithConcurrency(ctx context.Context, shards []source.Sou
 		wg.Add(1)
 		go func(s source.Source) {
 			defer wg.Done()
-			pipe := pipeline.New(m.cfg, s, m.pool, m.mon, m.targetSchema, tableName)
+			pipe := pipeline.New(m.cfg, s, m.pool, m.mon, s.SchemaName(), s.TableName())
 			if err := pipe.Run(ctx); err != nil {
 				errCh <- err
 				cancel()

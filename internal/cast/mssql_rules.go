@@ -39,6 +39,8 @@ func MSSQLDefaultRules() []CastRule {
 		// Float types: use float-to-string transform for COPY compatibility
 		{Match: MatchRule{SourceType: "float"}, TargetType: "float", Transform: "float-to-string"},
 		{Match: MatchRule{SourceType: "real"}, TargetType: "real", Transform: "float-to-string"},
+		// MSSQL "double" → PG "double precision" (PG has no bare "double" type)
+		{Match: MatchRule{SourceType: "double"}, TargetType: "double precision", DropTypemod: true, Transform: "float-to-string"},
 
 		// Decimal / numeric
 		{Match: MatchRule{SourceType: "numeric"}, TargetType: "numeric", Transform: "float-to-string"},

@@ -77,7 +77,14 @@ func (s *PgSQLSource) Close() error {
 // Source interface
 // ---------------------------------------------------------------------------
 
-func (s *PgSQLSource) TableName() string { return s.table }
+func (s *PgSQLSource) TableName() string {
+	if t := s.ActiveTable(); t != nil {
+		return t.Name
+	}
+	return s.table
+}
+
+func (s *PgSQLSource) SchemaName() string { return s.srcSchema }
 
 func (s *PgSQLSource) SetActiveTable(name string) error {
 	if s.schema_ == nil {

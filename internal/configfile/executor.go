@@ -213,7 +213,7 @@ func execMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	// Apply INCLUDING/EXCLUDING table name filters
 	src.SetTableFilters(cmd.IncludingOnly, cmd.Excluding)
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -229,7 +229,7 @@ func execPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	}
 	defer src.Close()
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -284,7 +284,7 @@ func execSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	// Apply INCLUDING/EXCLUDING table name filters
 	src.SetTableFilters(cmd.IncludingOnly, cmd.Excluding)
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 
@@ -339,7 +339,17 @@ func execMSSQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	// Apply INCLUDING/EXCLUDING table name filters
 	src.SetTableFilters(cmd.IncludingOnly, cmd.Excluding)
 
-	mig := orchestrator.NewMigration(cfg, src, pool, mon, schema)
+	// Apply MATERIALIZE VIEWS
+	src.SetMaterializeViews(cmd.MaterializeViews)
+
+	// Cleanup materialized view temp tables when done
+	defer func() {
+		if dropErr := src.DropMaterializedViews(ctx); dropErr != nil {
+			fmt.Fprintf(os.Stderr, "WARN: drop materialized views: %v\n", dropErr)
+		}
+	}()
+
+	mig := orchestrator.NewMigration(cfg, src, pool, mon)
 	return mig.Run(ctx)
 }
 

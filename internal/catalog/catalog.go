@@ -251,9 +251,14 @@ func (i *Index) CreateIndexSQL() string {
 
 	using, opclass := pgIndexOptions(i.Type)
 
-	return fmt.Sprintf("CREATE%s INDEX IF NOT EXISTS %s ON %s%s (%s%s);",
+	filter := ""
+	if i.Filter != "" {
+		filter = " WHERE " + i.Filter
+	}
+
+	return fmt.Sprintf("CREATE%s INDEX IF NOT EXISTS %s ON %s%s (%s%s)%s;",
 		unique, QuoteIdent(indexName), tableName, using,
-		strings.Join(QuoteIdents(i.Columns), ", "), opclass)
+		strings.Join(QuoteIdents(i.Columns), ", "), opclass, filter)
 }
 
 // qualifiedTableName returns the schema-qualified table name if schema is set.
