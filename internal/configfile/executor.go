@@ -164,6 +164,19 @@ func ExecuteCommand(ctx context.Context, cmd *LoadCommand, cli CLIOptions) error
 	return nil
 }
 
+// buildCastEngine creates a cast engine from default rules merged with any
+// user-specified CAST rules from the .load command. User rules take priority.
+func buildCastEngine(cmd *LoadCommand, defaultRules []cast.CastRule) (*cast.Engine, error) {
+	userRules, err := cast.ParseCastRules(cmd.CastRules)
+	if err != nil {
+		return nil, err
+	}
+	allRules := make([]cast.CastRule, 0, len(userRules)+len(defaultRules))
+	allRules = append(allRules, userRules...)
+	allRules = append(allRules, defaultRules...)
+	return cast.NewEngine(allRules), nil
+}
+
 // execMySQL runs a MySQL-to-PostgreSQL migration from a parsed command.
 func execMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	pool *pgxpool.Pool, cmd *LoadCommand, schema string) error {
@@ -202,7 +215,10 @@ func execMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 		schema = dbName
 	}
 
-	castEngine := cast.NewEngine(cast.MySQLDefaultRules())
+	castEngine, err := buildCastEngine(cmd, cast.MySQLDefaultRules())
+	if err != nil {
+		return fmt.Errorf("build cast rules: %w", err)
+	}
 	src := mysql.New(host, port, user, password, dbName, schema, "", pool, castEngine)
 
 	if err := src.Connect(ctx); err != nil {
@@ -221,7 +237,10 @@ func execMySQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 func execPgsql(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 	pool *pgxpool.Pool, cmd *LoadCommand, schema string) error {
 
-	castEngine := cast.NewEngine(cast.PgDefaultRules())
+	castEngine, err := buildCastEngine(cmd, cast.PgDefaultRules())
+	if err != nil {
+		return fmt.Errorf("build cast rules: %w", err)
+	}
 	src := pgsql.New(cmd.SourceURI, schema, "", pool, castEngine)
 
 	if err := src.Connect(ctx); err != nil {
@@ -273,7 +292,10 @@ func execSQLite(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 		schema = "public"
 	}
 
-	castEngine := cast.NewEngine(cast.SQLiteDefaultRules())
+	castEngine, err := buildCastEngine(cmd, cast.SQLiteDefaultRules())
+	if err != nil {
+		return fmt.Errorf("build cast rules: %w", err)
+	}
 	src := sqlite.New(path, schema, "", pool, castEngine)
 
 	if err := src.Connect(ctx); err != nil {
@@ -328,7 +350,10 @@ func execMSSQL(ctx context.Context, cfg *config.Config, mon *monitor.Monitor,
 		schema = "dbo"
 	}
 
-	castEngine := cast.NewEngine(cast.MSSQLDefaultRules())
+	castEngine, err := buildCastEngine(cmd, cast.MSSQLDefaultRules())
+	if err != nil {
+		return fmt.Errorf("build cast rules: %w", err)
+	}
 	src := mssql.New(host, port, user, password, dbName, schema, "", pool, castEngine)
 
 	if err := src.Connect(ctx); err != nil {

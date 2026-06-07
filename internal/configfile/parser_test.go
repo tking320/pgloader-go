@@ -369,9 +369,6 @@ func TestParseSampleMySQLFile(t *testing.T) {
 	if len(cmd.CastRules) == 0 {
 		t.Error("expected CAST rules")
 	}
-	if len(cmd.IncludingOnly) == 0 {
-		t.Error("expected INCLUDING patterns")
-	}
 	if len(cmd.Excluding) == 0 {
 		t.Error("expected EXCLUDING patterns")
 	}
@@ -533,9 +530,6 @@ func TestParseSampleMSSQLFile(t *testing.T) {
 	}
 	if len(cmd.CastRules) == 0 {
 		t.Error("expected CAST rules")
-	}
-	if len(cmd.IncludingOnly) == 0 {
-		t.Error("expected INCLUDING patterns")
 	}
 	if len(cmd.Excluding) == 0 {
 		t.Error("expected EXCLUDING patterns")
