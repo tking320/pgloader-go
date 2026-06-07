@@ -13,6 +13,13 @@ FROM basic_types WHERE id = 2;
 SELECT 'PASS' AS orders_row_count
 FROM orders WHERE customer_name = 'Alice' AND amount = 99.99;
 
+-- Verify users table and index
+SELECT 'PASS' AS users_row_count
+FROM users WHERE email = 'alice@example.com' AND name = 'Alice';
+
+SELECT 'PASS' AS users_index_exists
+FROM pg_indexes WHERE tablename = 'users' AND indexname = 'idx_users_email';
+
 -- Verify special table names
 SELECT 'PASS' AS space_table_name
 FROM "Test Tbl" WHERE val = 'space test';

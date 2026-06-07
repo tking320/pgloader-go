@@ -42,6 +42,15 @@ CREATE TABLE "Test""Tbl" (
 );
 INSERT INTO "Test""Tbl" (val) VALUES ('quote test');
 
+-- Test table for AFTER LOAD DO index creation
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    name TEXT
+);
+INSERT INTO users (email, name) VALUES ('alice@example.com', 'Alice');
+INSERT INTO users (email, name) VALUES ('bob@example.com', 'Bob');
+
 -- Table with indexes and FK
 CREATE TABLE parent (
     id INTEGER PRIMARY KEY,

@@ -46,7 +46,7 @@ LOAD DATABASE
           type date to date drop typemod,
           type time to time drop typemod
 
-     INCLUDING ONLY TABLE NAMES MATCHING ~/^main\./, 'data_%'
+     INCLUDING ONLY TABLE NAMES MATCHING '%', 'data_%'
 
      EXCLUDING TABLE NAMES MATCHING ~/sqlite_/, ~/_bak$/, 'temp_%'
 
